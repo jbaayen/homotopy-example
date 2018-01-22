@@ -5,7 +5,7 @@ import time
 # These parameters correspond to Table 1
 T = 10
 dt = 5 * 60
-times = np.arange(dt, T * dt, dt)
+times = np.arange(0, (T + 1) * dt, dt)
 H_b = -1.0
 l = 1000.0
 w = 5.0
@@ -119,14 +119,14 @@ for key in ['H_1', 'H_2', 'Q_1', 'Q_2', 'Q_3']:
     ax = fig.add_subplot(111, projection='3d')
     ax.set_xlabel(r'$\theta$ [-]')
     ax.set_ylabel(r'$t$ [$\cdot 10^3$ s]')
-    ax.set_zlabel('${}$ []'.format(key, unit))
+    ax.set_zlabel('${}$ [{}]'.format(key, unit))
     ax.set_xlim(0, 1)
     ax.set_ylim(times[0], times[-1])
 
     if key.startswith('Q'):
         ax.set_zlim(0, 1)
     else:
-        ax.set_zlim(-0.5, 0.5)
+        ax.set_zlim(-0.1, 0.2)
 
     ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color='black')
 
