@@ -2,6 +2,6 @@ This script implements the example case from the paper
 
     A continuation approach to nonlinear model predictive control of open channel systems
 
-by Jorn H. Baayen and Teresa Piovesan.
+by Jorn H. Baayen, Teresa Piovesan, and Jesse VanderWees.
 
-Tested with CasADi 3.3.0.
+Tested with CasADi 3.4.5.
