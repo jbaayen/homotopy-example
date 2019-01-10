@@ -4,4 +4,8 @@ This script implements the example case from the paper
 
 by Jorn H. Baayen, Teresa Piovesan, and Jesse VanderWees.
 
+The approach introduced in the paper and illustrated with this example forms the basis of the open source software package RTC-Tools:
+
+    https://gitlab.com/deltares/rtc-tools
+
 Tested with CasADi 3.4.5.
