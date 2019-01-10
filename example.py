@@ -43,7 +43,7 @@ theta = ca.MX.sym("theta")
 
 # Left boundary condition
 Q_left = np.full(T + 1, 100)
-Q_left[T // 4 : T // 2] = 300.0
+Q_left[T // 3 : 2 * T // 3] = 300.0
 Q_left = ca.DM(Q_left).T
 
 # Hydraulic constraints

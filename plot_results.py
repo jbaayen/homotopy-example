@@ -20,7 +20,7 @@ height = 4
 time_hrs = times / 3600
 fig, axarr = plt.subplots(n_subplots, sharex=True, figsize=(width, height))
 theta = 1.0
-vars_to_plot = "H_1", "H_4", "H_7", "H_10", "Q_1", "Q_4", "Q_7", "Q_11"
+vars_to_plot = "H_1", "H_4", "H_7", "H_10", "Q_1", "Q_4", "Q_8", "Q_11"
 for var in vars_to_plot:
     axarr[0 if var.startswith("Q") else 1].step(
         time_hrs, results[theta][var], where="mid", label=f"{var}"
@@ -61,7 +61,7 @@ for var in variable_names:
         )
 
     # Shrink margins
-    ax.set_ylim((90, 310) if var.startswith("Q") else (-2, 2))
+    ax.set_ylim((90, 310) if var.startswith("Q") else (-2.5, 2))
     ax.set_ylabel("Flow Rate [m³/s]" if var.startswith("Q") else "Water Level [m]")
     ax.set_xlabel("Time [hrs]")
 
