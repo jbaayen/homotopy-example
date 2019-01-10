@@ -2,7 +2,9 @@ This script implements the example case from the paper
 
     A continuation approach to nonlinear model predictive control of open channel systems
 
-by Jorn H. Baayen, Teresa Piovesan, and Jesse VanderWees.
+by Jorn H. Baayen, Teresa Piovesan, and Jesse VanderWees, available online at
+
+    https://arxiv.org/abs/1801.06507
 
 The approach introduced in the paper and illustrated with this example forms the basis of the open source software package RTC-Tools:
 
