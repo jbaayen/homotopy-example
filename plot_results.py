@@ -22,8 +22,17 @@ fig, axarr = plt.subplots(n_subplots, sharex=True, figsize=(width, height))
 theta = 1.0
 vars_to_plot = "H_1", "H_4", "H_7", "H_10", "Q_1", "Q_4", "Q_8", "Q_11"
 for var in vars_to_plot:
-    axarr[0 if var.startswith("Q") else 1].step(
-        time_hrs, results[theta][var], where="mid", label=f"{var}"
+    if var == "Q_1":
+        axarr[0].step(
+            time_hrs,
+            results[theta][var],
+            where="mid",
+            label=f"${var.split('_')[0]}_{{{var.split('_')[1]}}}$",
+        )
+    axarr[0 if var.startswith("Q") else 1].plot(
+        time_hrs,
+        results[theta][var],
+        label=f"${var.split('_')[0]}_{{{var.split('_')[1]}}}$",
     )
 
 axarr[0].set_ylabel("Flow Rate [m³/s]")
@@ -51,12 +60,19 @@ height = 2
 lightest_grey = 0.8
 for var in variable_names:
     fig, ax = plt.subplots(1, figsize=(width, height))
-    ax.set_title(var)
+    # ax.set_title(var)
     for theta in theta_values:
-        ax.step(
+        if var == "Q_1":
+            ax.step(
+                time_hrs,
+                results[theta][var],
+                where="mid",
+                color=str(lightest_grey - theta * lightest_grey),
+            )
+
+        ax.plot(
             time_hrs,
             results[theta][var],
-            where="mid",
             color=str(lightest_grey - theta * lightest_grey),
         )
 
