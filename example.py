@@ -8,7 +8,7 @@ T = 72
 dt = 10 * 60
 times = np.arange(0, (T + 1) * dt, dt)
 n_level_nodes = 10
-H_b = -5.0
+H_b = np.linspace(-4.9, -5.1, n_level_nodes)
 l = 10000.0
 w = 50.0
 C = 40.0
@@ -22,8 +22,8 @@ eps = 1e-12
 
 # Derived quantities
 dx = l / n_level_nodes
-A_nominal = w * (H_nominal - H_b)
-P_nominal = w + 2 * (H_nominal - H_b)
+A_nominal = w * (H_nominal - np.mean(H_b))
+P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 
 # Smoothed absolute value function
 sabs = lambda x: ca.sqrt(x ** 2 + eps)
@@ -32,8 +32,8 @@ sabs = lambda x: ca.sqrt(x ** 2 + eps)
 Q0 = np.full(n_level_nodes, 100.0)
 H0 = np.full(n_level_nodes, 0.0)
 for i in range(1, n_level_nodes):
-    A = w / 2.0 * (H0[i - 1] + H0[i] - 2 * H_b)
-    P = w + H0[i - 1] + H0[i] - 2 * H_b
+    A = w / 2.0 * (H0[i - 1] - H_b[i - 1] + H0[i] - H_b[i])
+    P = w + H0[i - 1] - H_b[i - 1] + H0[i] - H_b[i]
     H0[i] = H0[i - 1] - dx * (P / A ** 3) * sabs(Q0[i]) * Q0[i] / C ** 2
 
 # Symbols
@@ -49,8 +49,8 @@ Q_left = ca.DM(Q_left).T
 # Hydraulic constraints
 Q_full = ca.vertcat(Q_left, ca.horzcat(Q0, Q))
 H_full = ca.horzcat(H0, H)
-A_full = w * 0.5 * (H_full[1:, :] + H_full[:-1, :] - 2 * H_b)
-P_full = w + (H_full[1:, :] + H_full[:-1, :] - 2 * H_b)
+A_full = w * 0.5 * (H_full[1:, :] - H_b[1:] + H_full[:-1, :] - H_b[:-1])
+P_full = w + (H_full[1:, :] - H_b[1:] + H_full[:-1, :] - H_b[:-1])
 
 c = w * (H_full[:, 1:] - H_full[:, :-1]) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dx
 d = (
@@ -79,7 +79,7 @@ ubQ[-1] = 200.0
 
 lbQ = ca.repmat(ca.DM(lbQ), 1, T)
 ubQ = ca.repmat(ca.DM(ubQ), 1, T)
-lbH = ca.repmat(H_b, n_level_nodes, T)
+lbH = ca.repmat(H_b, 1, T)
 ubH = ca.repmat(np.inf, n_level_nodes, T)
 
 # Optimization problem
