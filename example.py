@@ -79,7 +79,11 @@ ubQ[-1] = 200.0
 
 lbQ = ca.repmat(ca.DM(lbQ), 1, T)
 ubQ = ca.repmat(ca.DM(ubQ), 1, T)
-lbH = ca.repmat(H_b, 1, T)
+H_b_convolved_max = [
+    max(H_b[np.array((max(0, i - 1), i, min(i + 1, H_b.size - 1)))])
+    for i in range(len(H_b))
+]
+lbH = ca.repmat(H_b_convolved_max, 1, T)
 ubH = ca.repmat(np.inf, n_level_nodes, T)
 
 # Optimization problem
