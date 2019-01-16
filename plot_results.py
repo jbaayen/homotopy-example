@@ -29,6 +29,7 @@ for var in vars_to_plot:
             where="mid",
             label=f"${var.split('_')[0]}_{{{var.split('_')[1]}}}$",
         )
+        continue
     axarr[0 if var.startswith("Q") else 1].plot(
         time_hrs,
         results[theta][var],
