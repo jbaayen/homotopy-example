@@ -136,9 +136,9 @@ for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
     Q_res = ca.reshape(x0[: Q.size1() * Q.size2()], Q.size1(), Q.size2())
     H_res = ca.reshape(x0[Q.size1() * Q.size2() :], H.size1(), H.size2())
     d = {}
-    d["Q_1"] = np.array(Q_left).flatten()
+    d["Q_0"] = np.array(Q_left).flatten()
     for i in range(n_level_nodes):
-        d[f"Q_{i + 2}"] = np.array(ca.horzcat(Q0[i], Q_res[i, :])).flatten()
+        d[f"Q_{i + 1}"] = np.array(ca.horzcat(Q0[i], Q_res[i, :])).flatten()
         d[f"H_{i + 1}"] = np.array(ca.horzcat(H0[i], H_res[i, :])).flatten()
     results[theta_value] = d
 

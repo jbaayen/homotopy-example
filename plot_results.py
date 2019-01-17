@@ -20,9 +20,9 @@ height = 4
 time_hrs = times / 3600
 fig, axarr = plt.subplots(n_subplots, sharex=True, figsize=(width, height))
 theta = 1.0
-vars_to_plot = "H_1", "H_4", "H_7", "H_10", "Q_1", "Q_4", "Q_8", "Q_11"
+vars_to_plot = "H_1", "H_4", "H_7", "H_10", "Q_0", "Q_3", "Q_7", "Q_10"
 for var in vars_to_plot:
-    if var == "Q_1":
+    if var == "Q_0":
         axarr[0].step(
             time_hrs,
             results[theta][var],
@@ -63,7 +63,7 @@ for var in variable_names:
     fig, ax = plt.subplots(1, figsize=(width, height))
     # ax.set_title(var)
     for theta in theta_values:
-        if var == "Q_1":
+        if var == "Q_0":
             ax.step(
                 time_hrs,
                 results[theta][var],
