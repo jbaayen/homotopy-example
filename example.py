@@ -19,6 +19,7 @@ n_theta_steps = 10
 # Generic constants
 g = 9.81
 eps = 1e-12
+K = 10
 
 # Derived quantities
 dx = l / n_level_nodes
@@ -27,6 +28,9 @@ P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 
 # Smoothed absolute value function
 sabs = lambda x: ca.sqrt(x ** 2 + eps)
+
+# Smoothed Heaviside function
+sH = lambda x : 1 / (1 + ca.exp(-K * x))
 
 # Compute steady state initial condition
 Q0 = np.full(n_level_nodes, 100.0)
@@ -50,18 +54,23 @@ Q_left = ca.DM(Q_left).T
 Q_full = ca.vertcat(Q_left, ca.horzcat(Q0, Q))
 H_full = ca.horzcat(H0, H)
 A_full = w * 0.5 * (H_full[1:, :] - H_b[1:] + H_full[:-1, :] - H_b[:-1])
+A_full = ca.vertcat(w * (H_full[0, :] - H_b[0]), A_full, w * (H_full[-1, :] - H_b[-1]))
 P_full = w + (H_full[1:, :] - H_b[1:] + H_full[:-1, :] - H_b[:-1])
 
 c = w * (H_full[:, 1:] - H_full[:, :-1]) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dx
 d = (
     (Q_full[1:-1, 1:] - Q_full[1:-1, :-1]) / dt
+    + theta * (
+        sH(Q_full[1:-1, :-1]) * (Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1] - Q_full[0:-2, :-1]**2 / A_full[0:-2, :-1]) / dx
+        + (1 - sH(Q_full[1:-1, :-1])) * (Q_full[2:, :-1]**2 / A_full[2:, :-1] - Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1]) / dx
+    )
     + g
-    * (theta * A_full[:, 1:] + (1 - theta) * A_nominal)
+    * (theta * A_full[1:-1, 1:] + (1 - theta) * A_nominal)
     * (H_full[1:, 1:] - H_full[:-1, 1:])
     / dx
     + g
     * (
-        theta * P_full[:, :-1] * sabs(Q_full[1:-1, 1:]) / A_full[:, :-1] ** 2
+        theta * P_full[:, :-1] * sabs(Q_full[1:-1, 1:]) / A_full[1:-1, :-1] ** 2
         + (1 - theta) * P_nominal * sabs(Q_nominal) / A_nominal ** 2
     )
     * Q_full[1:-1, 1:]
