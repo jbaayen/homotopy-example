@@ -30,7 +30,7 @@ P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 sabs = lambda x: ca.sqrt(x ** 2 + eps)
 
 # Smoothed Heaviside function
-sH = lambda x : 1 / (1 + ca.exp(-K * x))
+sH = lambda x: 1 / (1 + ca.exp(-K * x))
 
 # Compute steady state initial condition
 Q0 = np.full(n_level_nodes, 100.0)
@@ -43,6 +43,7 @@ for i in range(1, n_level_nodes):
 # Symbols
 Q = ca.MX.sym("Q", n_level_nodes, T)
 H = ca.MX.sym("H", n_level_nodes, T)
+delta = ca.MX.sym("delta", 1, T)
 theta = ca.MX.sym("theta")
 
 # Left boundary condition
@@ -60,9 +61,20 @@ P_full = w + (H_full[1:, :] - H_b[1:] + H_full[:-1, :] - H_b[:-1])
 c = w * (H_full[:, 1:] - H_full[:, :-1]) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dx
 d = (
     (Q_full[1:-1, 1:] - Q_full[1:-1, :-1]) / dt
-    + theta * (
-        sH(Q_full[1:-1, :-1]) * (Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1] - Q_full[0:-2, :-1]**2 / A_full[0:-2, :-1]) / dx
-        + (1 - sH(Q_full[1:-1, :-1])) * (Q_full[2:, :-1]**2 / A_full[2:, :-1] - Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1]) / dx
+    + theta
+    * (
+        sH(Q_full[1:-1, :-1])
+        * (
+            Q_full[1:-1, :-1] ** 2 / A_full[1:-1, :-1]
+            - Q_full[0:-2, :-1] ** 2 / A_full[0:-2, :-1]
+        )
+        / dx
+        + (1 - sH(Q_full[1:-1, :-1]))
+        * (
+            Q_full[2:, :-1] ** 2 / A_full[2:, :-1]
+            - Q_full[1:-1, :-1] ** 2 / A_full[1:-1, :-1]
+        )
+        / dx
     )
     + g
     * (theta * A_full[1:-1, 1:] + (1 - theta) * A_nominal)
@@ -77,14 +89,18 @@ d = (
     / C ** 2
 )
 
+# Integer constraint
+control_indices = [i * n_level_nodes + n_level_nodes - 1 for i in range(T)]
+e = Q[control_indices] - (100 + 100 * ca.transpose(delta))
+
 # Objective function
 f = ca.sum1(ca.vec(H ** 2))
 
 # Variable bounds
 lbQ = np.full(n_level_nodes, -np.inf)
-lbQ[-1] = 100.0
+# lbQ[-1] = 100.0
 ubQ = np.full(n_level_nodes, np.inf)
-ubQ[-1] = 200.0
+# ubQ[-1] = 200.0
 
 lbQ = ca.repmat(ca.DM(lbQ), 1, T)
 ubQ = ca.repmat(ca.DM(ubQ), 1, T)
@@ -95,19 +111,28 @@ H_b_convolved_max = [
 lbH = ca.repmat(H_b_convolved_max, 1, T)
 ubH = ca.repmat(np.inf, n_level_nodes, T)
 
+lbdelta = np.full(1, 0)
+lbdelta = ca.repmat(ca.DM(lbdelta), 1, T)
+
+ubdelta = np.full(1, 1)
+ubdelta = ca.repmat(ca.DM(ubdelta), 1, T)
+
 # Optimization problem
 assert Q.size() == lbQ.size()
 assert Q.size() == ubQ.size()
 assert H.size() == lbH.size()
 assert H.size() == ubH.size()
 
-X = ca.veccat(Q, H)
-lbX = ca.veccat(lbQ, lbH)
-ubX = ca.veccat(ubQ, ubH)
+X = ca.veccat(Q, H, delta)
+lbX = ca.veccat(lbQ, lbH, lbdelta)
+ubX = ca.veccat(ubQ, ubH, ubdelta)
 
-g = ca.veccat(c, d)
+g = ca.veccat(c, d, e)
 lbg = ca.repmat(0, g.size1())
 ubg = lbg
+
+f_f = ca.Function("f", [X, theta], [f])
+f_g = ca.Function("g", [X, theta], [g])
 
 nlp = {"f": f, "g": g, "x": X, "p": theta}
 solver = ca.nlpsol(
@@ -127,28 +152,60 @@ solver = ca.nlpsol(
     },
 )
 
-# Initial guess
+
+# Output problem structure
+# TODO function signatures
+# TODO @Jakub
 x0 = ca.repmat(0, X.size1())
 
+print(lbX.toarray())
+print(ubX.toarray())
+
+g0 = ca.Function("g0", [X], [f_g(X, 0.0)])
+Jg0 = g0.jacobian()
+g0_x0 = g0(x0)
+Jg0_x0 = Jg0(x0, g0_x0).sparse()
+
+print(Jg0_x0)
+print(lbg.toarray())
+print(ubg.toarray())
+
+f0 = ca.Function("f0", [X], [f_f(X, 0.0)])
+Jf0 = f0.jacobian()
+Hf0 = Jf0.jacobian()
+f0_x0 = f0(x0)
+Jf0_x0 = Jf0(x0, f0_x0).sparse()
+Hf0_x0 = Hf0(x0, f0_x0, Jf0_x0).sparse()
+
+print(Jf0_x0)
+print(Hf0_x0)
+
+binary_indices = range(Q.numel() + H.numel(), Q.numel() + H.numel() + delta.numel())
+
+print(binary_indices)
+
 # Solve
+def homotopy_solve():
+    results = {}
+    x0 = ca.repmat(0, X.size1())
+    for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
+        solution = solver(lbx=lbX, ubx=ubX, lbg=lbg, ubg=ubg, p=theta_value, x0=x0)
+        if solver.stats()["return_status"] != "Solve_Succeeded":
+            raise Exception(
+                "Solve failed with status {}".format(solver.stats()["return_status"])
+            )
+        x0 = solution["x"]
+        Q_res = ca.reshape(x0[: Q.numel()], Q.size1(), Q.size2())
+        H_res = ca.reshape(x0[Q.numel() : Q.numel() + H.numel()], H.size1(), H.size2())
+        d = {}
+        d["Q_0"] = np.array(Q_left).flatten()
+        for i in range(n_level_nodes):
+            d[f"Q_{i + 1}"] = np.array(ca.horzcat(Q0[i], Q_res[i, :])).flatten()
+            d[f"H_{i + 1}"] = np.array(ca.horzcat(H0[i], H_res[i, :])).flatten()
+        results[theta_value] = d
+    return results
+
+
 t0 = time.time()
-
-results = {}
-
-for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
-    solution = solver(lbx=lbX, ubx=ubX, lbg=lbg, ubg=ubg, p=theta_value, x0=x0)
-    if solver.stats()["return_status"] != "Solve_Succeeded":
-        raise Exception(
-            "Solve failed with status {}".format(solver.stats()["return_status"])
-        )
-    x0 = solution["x"]
-    Q_res = ca.reshape(x0[: Q.size1() * Q.size2()], Q.size1(), Q.size2())
-    H_res = ca.reshape(x0[Q.size1() * Q.size2() :], H.size1(), H.size2())
-    d = {}
-    d["Q_0"] = np.array(Q_left).flatten()
-    for i in range(n_level_nodes):
-        d[f"Q_{i + 1}"] = np.array(ca.horzcat(Q0[i], Q_res[i, :])).flatten()
-        d[f"H_{i + 1}"] = np.array(ca.horzcat(H0[i], H_res[i, :])).flatten()
-    results[theta_value] = d
-
+results = homotopy_solve()
 print("Time elapsed in solver: {}s".format(time.time() - t0))
