@@ -1,5 +1,7 @@
 import time
 
+from typing import Dict, Set
+
 import casadi as ca
 import numpy as np
 
@@ -131,9 +133,6 @@ g = ca.veccat(c, d, e)
 lbg = ca.repmat(0, g.size1())
 ubg = lbg
 
-f_f = ca.Function("f", [X, theta], [f])
-f_g = ca.Function("g", [X, theta], [g])
-
 nlp = {"f": f, "g": g, "x": X, "p": theta}
 solver = ca.nlpsol(
     "nlpsol",
@@ -152,15 +151,14 @@ solver = ca.nlpsol(
     },
 )
 
-
 # Output problem structure
-# TODO function signatures
 # TODO @Jakub
 x0 = ca.repmat(0, X.size1())
 
 print(lbX.toarray())
 print(ubX.toarray())
 
+f_g = ca.Function("g", [X, theta], [g])
 g0 = ca.Function("g0", [X], [f_g(X, 0.0)])
 Jg0 = g0.jacobian()
 g0_x0 = g0(x0)
@@ -170,6 +168,7 @@ print(Jg0_x0)
 print(lbg.toarray())
 print(ubg.toarray())
 
+f_f = ca.Function("f", [X, theta], [f])
 f0 = ca.Function("f0", [X], [f_f(X, 0.0)])
 Jf0 = f0.jacobian()
 Hf0 = Jf0.jacobian()
@@ -185,11 +184,30 @@ binary_indices = range(Q.numel() + H.numel(), Q.numel() + H.numel() + delta.nume
 print(binary_indices)
 
 # Solve
-def homotopy_solve():
+w_lbX = np.array(lbX, copy=True)
+w_ubX = np.array(ubX, copy=True)
+
+
+def homotopy_solve(delta_on: Set[int], delta_off: Set[int]) -> Dict[str, np.array]:
+    # Fix integer variables
+    offset = Q.numel() + H.numel()
+    for i in range(delta.numel()):
+        if i in delta_on:
+            w_lbX[offset] = 1.0
+            w_ubX[offset] = 1.0
+        elif i in delta_off:
+            w_lbX[offset] = 0.0
+            w_ubX[offset] = 0.0
+        else:
+            w_lbX[offset] = 0.0
+            w_ubX[offset] = 1.0
+        offset += 1
+
+    # Homotopy loop
     results = {}
     x0 = ca.repmat(0, X.size1())
     for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
-        solution = solver(lbx=lbX, ubx=ubX, lbg=lbg, ubg=ubg, p=theta_value, x0=x0)
+        solution = solver(lbx=w_lbX, ubx=w_ubX, lbg=lbg, ubg=ubg, p=theta_value, x0=x0)
         if solver.stats()["return_status"] != "Solve_Succeeded":
             raise Exception(
                 "Solve failed with status {}".format(solver.stats()["return_status"])
@@ -207,5 +225,5 @@ def homotopy_solve():
 
 
 t0 = time.time()
-results = homotopy_solve()
+results = homotopy_solve(set(), set())
 print("Time elapsed in solver: {}s".format(time.time() - t0))
