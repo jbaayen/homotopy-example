@@ -186,8 +186,6 @@ print(binary_indices)
 # Solve
 w_lbX = np.array(lbX, copy=True)
 w_ubX = np.array(ubX, copy=True)
-
-
 def homotopy_solve(delta_on: Set[int], delta_off: Set[int]) -> Dict[str, np.array]:
     # Fix integer variables
     offset = Q.numel() + H.numel()
@@ -216,6 +214,7 @@ def homotopy_solve(delta_on: Set[int], delta_off: Set[int]) -> Dict[str, np.arra
         Q_res = ca.reshape(x0[: Q.numel()], Q.size1(), Q.size2())
         H_res = ca.reshape(x0[Q.numel() : Q.numel() + H.numel()], H.size1(), H.size2())
         d = {}
+        d["objective"] = solution["f"]
         d["Q_0"] = np.array(Q_left).flatten()
         for i in range(n_level_nodes):
             d[f"Q_{i + 1}"] = np.array(ca.horzcat(Q0[i], Q_res[i, :])).flatten()
