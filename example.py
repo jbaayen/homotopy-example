@@ -9,12 +9,13 @@ dt = 10 * 60
 times = np.arange(0, (T + 1) * dt, dt)
 n_level_nodes = 10
 H_b = np.linspace(-4.9, -5.1, n_level_nodes)
-l = 20000.0
+l = 10000.0
 w = 50.0
 C = 40.0
 H_nominal = 0.0
 Q_nominal = 100
 n_theta_steps = 10
+trace_path = False
 
 # Generic constants
 g = 9.81
@@ -61,16 +62,19 @@ c = w * (H_full[:, 1:] - H_full[:, :-1]) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:
 d = (
     (Q_full[1:-1, 1:] - Q_full[1:-1, :-1]) / dt
     + theta * (
-        sH(Q_full[1:-1, :-1]) * (Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1] - Q_full[0:-2, :-1]**2 / A_full[0:-2, :-1]) / dx
-        + (1 - sH(Q_full[1:-1, :-1])) * (Q_full[2:, :-1]**2 / A_full[2:, :-1] - Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1]) / dx
+        2 * Q_full[1:-1, :-1] / A_full[1:-1, :-1] * (
+            sH(Q_full[1:-1, :-1]) * (Q_full[1:-1, :-1] - Q_full[0:-2, :-1]) / dx
+            + (1 - sH(Q_full[1:-1, :-1])) * (Q_full[2:, :-1] - Q_full[1:-1, :-1]) / dx
+        )
+        - Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1]**2 * w * (H_full[1:, :-1] - H_full[:-1, :-1]) / dx
     )
     + g
-    * (theta * A_full[1:-1, 1:] + (1 - theta) * A_nominal)
+    * (theta * A_full[1:-1, :-1] + (1 - theta) * A_nominal)
     * (H_full[1:, 1:] - H_full[:-1, 1:])
     / dx
     + g
     * (
-        theta * P_full[:, :-1] * sabs(Q_full[1:-1, 1:]) / A_full[1:-1, :-1] ** 2
+        theta * P_full[:, :-1] * sabs(Q_full[1:-1, :-1]) / A_full[1:-1, :-1] ** 2 # TODO causes instab
         + (1 - theta) * P_nominal * sabs(Q_nominal) / A_nominal ** 2
     )
     * Q_full[1:-1, 1:]
@@ -88,11 +92,7 @@ ubQ[-1] = 200.0
 
 lbQ = ca.repmat(ca.DM(lbQ), 1, T)
 ubQ = ca.repmat(ca.DM(ubQ), 1, T)
-H_b_convolved_max = [
-    max(H_b[np.array((max(0, i - 1), i, min(i + 1, H_b.size - 1)))])
-    for i in range(len(H_b))
-]
-lbH = ca.repmat(H_b_convolved_max, 1, T)
+lbH = ca.repmat(-np.inf, n_level_nodes, T)
 ubH = ca.repmat(np.inf, n_level_nodes, T)
 
 # Optimization problem
@@ -135,7 +135,8 @@ t0 = time.time()
 
 results = {}
 
-for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
+def solve(theta_value):
+    global x0
     solution = solver(lbx=lbX, ubx=ubX, lbg=lbg, ubg=ubg, p=theta_value, x0=x0)
     if solver.stats()["return_status"] != "Solve_Succeeded":
         raise Exception(
@@ -150,5 +151,11 @@ for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
         d[f"Q_{i + 1}"] = np.array(ca.horzcat(Q0[i], Q_res[i, :])).flatten()
         d[f"H_{i + 1}"] = np.array(ca.horzcat(H0[i], H_res[i, :])).flatten()
     results[theta_value] = d
+
+if trace_path:
+    for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
+        solve(theta_value)
+else:
+    solve(1.0)
 
 print("Time elapsed in solver: {}s".format(time.time() - t0))
