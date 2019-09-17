@@ -20,7 +20,7 @@ height = 4
 time_hrs = times / 3600
 fig, axarr = plt.subplots(n_subplots, sharex=True, figsize=(width, height))
 theta = 1.0
-vars_to_plot = "H_1", "H_4", "H_7", "H_10", "Q_0", "Q_3", "Q_7", "Q_10"
+vars_to_plot = "H_1", "H_4", "H_8", "H_12", "H_16", "Q_0", "Q_3", "Q_8", "Q_12", "Q_16"
 for var in vars_to_plot:
     if var == "Q_0":
         axarr[0].step(

@@ -1,29 +1,35 @@
 import time
+import sys
 
 import casadi as ca
 import numpy as np
 
+
 # These parameters correspond to Table 1
-T = 72
-dt = 10 * 60
+dt = 5 * 60
+steps_per_hour = round(3600 / dt)
+T = 48 * steps_per_hour
 times = np.arange(0, (T + 1) * dt, dt)
-n_level_nodes = 10
-H_b = np.linspace(-4.9, -5.1, n_level_nodes)
+n_level_nodes = 16
+H_b = np.linspace(-5.0, -5.1875, n_level_nodes)
 l = 10000.0
 w = 50.0
 C = 40.0
 H_nominal = 0.0
 Q_nominal = 100
 n_theta_steps = 10
-trace_path = False
+trace_path = True
 
 # Generic constants
 g = 9.81
 eps = 1e-12
 K = 10
+alpha = 2
+min_depth = 1e-2
 
 # Derived quantities
-dx = l / n_level_nodes
+dxH = ca.MX(ca.repmat(l / (n_level_nodes - 1), n_level_nodes - 1))
+dxQ = ca.MX(ca.vertcat(0.5 * dxH[0], 0.5 * (dxH[1:] + dxH[:-1]), 0.5 * dxH[-1])) # TODO!!!
 A_nominal = w * (H_nominal - np.mean(H_b))
 P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 
@@ -33,13 +39,12 @@ sabs = lambda x: ca.sqrt(x ** 2 + eps)
 # Smoothed Heaviside function
 sH = lambda x : 1 / (1 + ca.exp(-K * x))
 
-# Compute steady state initial condition
+# Smoothed max function
+smax = lambda x, y : (x * ca.exp(alpha * x) + y * ca.exp(alpha * y)) / (ca.exp(alpha * x) + ca.exp(alpha * y))
+
+# Initial condition
 Q0 = np.full(n_level_nodes, 100.0)
-H0 = np.full(n_level_nodes, 0.0)
-for i in range(1, n_level_nodes):
-    A = w / 2.0 * (H0[i - 1] - H_b[i - 1] + H0[i] - H_b[i])
-    P = w + H0[i - 1] - H_b[i - 1] + H0[i] - H_b[i]
-    H0[i] = H0[i - 1] - dx * (P / A ** 3) * sabs(Q0[i]) * Q0[i] / C ** 2
+H0 = np.linspace(0.0, -0.26, n_level_nodes)
 
 # Symbols
 Q = ca.MX.sym("Q", n_level_nodes, T)
@@ -48,33 +53,34 @@ theta = ca.MX.sym("theta")
 
 # Left boundary condition
 Q_left = np.full(T + 1, 100)
-Q_left[T // 3 : 2 * T // 3] = 300.0
+Q_left[20 * steps_per_hour : (20 + 8) * steps_per_hour + 1] = 300.0
 Q_left = ca.DM(Q_left).T
 
 # Hydraulic constraints
 Q_full = ca.vertcat(Q_left, ca.horzcat(Q0, Q))
 H_full = ca.horzcat(H0, H)
-A_full = w * 0.5 * (H_full[1:, :] - H_b[1:] + H_full[:-1, :] - H_b[:-1])
-A_full = ca.vertcat(w * (H_full[0, :] - H_b[0]), A_full, w * (H_full[-1, :] - H_b[-1]))
-P_full = w + (H_full[1:, :] - H_b[1:] + H_full[:-1, :] - H_b[:-1])
+depth_full = smax(min_depth, H_full - H_b) 
+A_full_H = w * depth_full
+A_full_Q = ca.vertcat(A_full_H[0, :], 0.5 * (A_full_H[1:, :] + A_full_H[:-1, :]), A_full_H[-1, :])
+P_full_Q = w + (depth_full[1:, :] + depth_full[:-1, :])
 
-c = w * (H_full[:, 1:] - H_full[:, :-1]) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dx
+c = (A_full_H[:, 1:] - A_full_H[:, :-1]) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dxQ
 d = (
     (Q_full[1:-1, 1:] - Q_full[1:-1, :-1]) / dt
     + theta * (
-        2 * Q_full[1:-1, :-1] / A_full[1:-1, :-1] * (
-            sH(Q_full[1:-1, :-1]) * (Q_full[1:-1, :-1] - Q_full[0:-2, :-1]) / dx
-            + (1 - sH(Q_full[1:-1, :-1])) * (Q_full[2:, :-1] - Q_full[1:-1, :-1]) / dx
+        2 * Q_full[1:-1, :-1] / A_full_Q[1:-1, :-1] * (
+            sH(Q_full[1:-1, :-1]) * (Q_full[1:-1, :-1] - Q_full[0:-2, :-1]) / dxQ[:-1]
+            + (1 - sH(Q_full[1:-1, :-1])) * (Q_full[2:, :-1] - Q_full[1:-1, :-1]) / dxQ[1:]
         )
-        - Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1]**2 * w * (H_full[1:, :-1] - H_full[:-1, :-1]) / dx
+        - (Q_full[1:-1, :-1] / A_full_Q[1:-1, :-1])**2 * (A_full_H[1:, :-1] - A_full_H[:-1, :-1]) / dxH
     )
     + g
-    * (theta * A_full[1:-1, :-1] + (1 - theta) * A_nominal)
+    * (theta * A_full_Q[1:-1, :-1] + (1 - theta) * A_nominal)
     * (H_full[1:, 1:] - H_full[:-1, 1:])
-    / dx
+    / dxH
     + g
     * (
-        theta * P_full[:, :-1] * sabs(Q_full[1:-1, :-1]) / A_full[1:-1, :-1] ** 2 # TODO causes instab
+        theta * P_full_Q[:, :-1] * sabs(Q_full[1:-1, :-1]) / A_full_Q[1:-1, :-1] ** 2
         + (1 - theta) * P_nominal * sabs(Q_nominal) / A_nominal ** 2
     )
     * Q_full[1:-1, 1:]
@@ -82,11 +88,11 @@ d = (
 )
 
 # Objective function
-f = ca.sum1(ca.vec(H ** 2))
+f = ca.sum1(ca.vec(H[0, :]**2 + H[-1, :]**2))
 
 # Variable bounds
 lbQ = np.full(n_level_nodes, -np.inf)
-lbQ[-1] = 100.0
+lbQ[-1] = 0.0
 ubQ = np.full(n_level_nodes, np.inf)
 ubQ[-1] = 200.0
 
@@ -116,12 +122,10 @@ solver = ca.nlpsol(
     nlp,
     {
         "ipopt": {
-            "tol": 1e-10,
-            "constr_viol_tol": 1e-10,
-            "acceptable_tol": 1e-10,
-            "acceptable_constr_viol_tol": 1e-10,
-            "print_level": 0,
-            "print_timing_statistics": "no",
+            "tol": 1e-3,
+            "constr_viol_tol": 1e-3,
+            "acceptable_tol": 1e-3,
+            "acceptable_constr_viol_tol": 1e-3,
             "fixed_variable_treatment": "make_constraint",
         }
     },
@@ -159,3 +163,8 @@ else:
     solve(1.0)
 
 print("Time elapsed in solver: {}s".format(time.time() - t0))
+
+# Output to CSV
+import pandas as pd
+df = pd.DataFrame(data=results[1.0])
+df.to_csv("results.csv")
