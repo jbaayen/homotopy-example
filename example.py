@@ -29,7 +29,9 @@ min_depth = 1e-2
 
 # Derived quantities
 dxH = ca.MX(ca.repmat(l / (n_level_nodes - 1), n_level_nodes - 1))
-dxQ = ca.MX(ca.vertcat(0.5 * dxH[0], 0.5 * (dxH[1:] + dxH[:-1]), 0.5 * dxH[-1])) # TODO!!!
+dxQ = ca.MX(
+    ca.vertcat(0.5 * dxH[0], 0.5 * (dxH[1:] + dxH[:-1]), 0.5 * dxH[-1])
+)
 A_nominal = w * (H_nominal - np.mean(H_b))
 P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 
@@ -37,10 +39,12 @@ P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 sabs = lambda x: ca.sqrt(x ** 2 + eps)
 
 # Smoothed Heaviside function
-sH = lambda x : 1 / (1 + ca.exp(-K * x))
+sH = lambda x: 1 / (1 + ca.exp(-K * x))
 
 # Smoothed max function
-smax = lambda x, y : (x * ca.exp(alpha * x) + y * ca.exp(alpha * y)) / (ca.exp(alpha * x) + ca.exp(alpha * y))
+smax = lambda x, y: (x * ca.exp(alpha * x) + y * ca.exp(alpha * y)) / (
+    ca.exp(alpha * x) + ca.exp(alpha * y)
+)
 
 # Initial condition
 Q0 = np.full(n_level_nodes, 100.0)
@@ -59,20 +63,32 @@ Q_left = ca.DM(Q_left).T
 # Hydraulic constraints
 Q_full = ca.vertcat(Q_left, ca.horzcat(Q0, Q))
 H_full = ca.horzcat(H0, H)
-depth_full = smax(min_depth, H_full - H_b) 
+depth_full = smax(min_depth, H_full - H_b)
 A_full_H = w * depth_full
-A_full_Q = ca.vertcat(A_full_H[0, :], 0.5 * (A_full_H[1:, :] + A_full_H[:-1, :]), A_full_H[-1, :])
+A_full_Q = ca.vertcat(
+    A_full_H[0, :], 0.5 * (A_full_H[1:, :] + A_full_H[:-1, :]), A_full_H[-1, :]
+)
 P_full_Q = w + (depth_full[1:, :] + depth_full[:-1, :])
 
-c = (A_full_H[:, 1:] - A_full_H[:, :-1]) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dxQ
+c = (
+    theta * (A_full_H[:, 1:] - A_full_H[:, :-1]) + (1 - theta) * w * (H_full - H_b)
+) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dxQ
 d = (
     (Q_full[1:-1, 1:] - Q_full[1:-1, :-1]) / dt
-    + theta * (
-        2 * Q_full[1:-1, :-1] / A_full_Q[1:-1, :-1] * (
+    + theta
+    * (
+        2
+        * Q_full[1:-1, :-1]
+        / A_full_Q[1:-1, :-1]
+        * (
             sH(Q_full[1:-1, :-1]) * (Q_full[1:-1, :-1] - Q_full[0:-2, :-1]) / dxQ[:-1]
-            + (1 - sH(Q_full[1:-1, :-1])) * (Q_full[2:, :-1] - Q_full[1:-1, :-1]) / dxQ[1:]
+            + (1 - sH(Q_full[1:-1, :-1]))
+            * (Q_full[2:, :-1] - Q_full[1:-1, :-1])
+            / dxQ[1:]
         )
-        - (Q_full[1:-1, :-1] / A_full_Q[1:-1, :-1])**2 * (A_full_H[1:, :-1] - A_full_H[:-1, :-1]) / dxH
+        - (Q_full[1:-1, :-1] / A_full_Q[1:-1, :-1]) ** 2
+        * (A_full_H[1:, :-1] - A_full_H[:-1, :-1])
+        / dxH
     )
     + g
     * (theta * A_full_Q[1:-1, :-1] + (1 - theta) * A_nominal)
@@ -88,7 +104,7 @@ d = (
 )
 
 # Objective function
-f = ca.sum1(ca.vec(H[0, :]**2 + H[-1, :]**2))
+f = ca.sum1(ca.vec(H[0, :] ** 2 + H[-1, :] ** 2))
 
 # Variable bounds
 lbQ = np.full(n_level_nodes, -np.inf)
@@ -139,6 +155,7 @@ t0 = time.time()
 
 results = {}
 
+
 def solve(theta_value):
     global x0
     solution = solver(lbx=lbX, ubx=ubX, lbg=lbg, ubg=ubg, p=theta_value, x0=x0)
@@ -156,6 +173,7 @@ def solve(theta_value):
         d[f"H_{i + 1}"] = np.array(ca.horzcat(H0[i], H_res[i, :])).flatten()
     results[theta_value] = d
 
+
 if trace_path:
     for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
         solve(theta_value)
@@ -166,5 +184,6 @@ print("Time elapsed in solver: {}s".format(time.time() - t0))
 
 # Output to CSV
 import pandas as pd
+
 df = pd.DataFrame(data=results[1.0])
 df.to_csv("results.csv")
