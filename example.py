@@ -29,9 +29,7 @@ min_depth = 1e-2
 
 # Derived quantities
 dxH = ca.MX(ca.repmat(l / (n_level_nodes - 1), n_level_nodes - 1))
-dxQ = ca.MX(
-    ca.vertcat(0.5 * dxH[0], 0.5 * (dxH[1:] + dxH[:-1]), 0.5 * dxH[-1])
-)
+dxQ = ca.MX(ca.vertcat(0.5 * dxH[0], 0.5 * (dxH[1:] + dxH[:-1]), 0.5 * dxH[-1]))
 A_nominal = w * (H_nominal - np.mean(H_b))
 P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 
@@ -63,15 +61,17 @@ Q_left = ca.DM(Q_left).T
 # Hydraulic constraints
 Q_full = ca.vertcat(Q_left, ca.horzcat(Q0, Q))
 H_full = ca.horzcat(H0, H)
-depth_full = smax(min_depth, H_full - H_b)
-A_full_H = w * depth_full
+depth_full = H_full - H_b
+depth_full_c = smax(min_depth, depth_full)
+A_full_H = w * depth_full_c
 A_full_Q = ca.vertcat(
     A_full_H[0, :], 0.5 * (A_full_H[1:, :] + A_full_H[:-1, :]), A_full_H[-1, :]
 )
-P_full_Q = w + (depth_full[1:, :] + depth_full[:-1, :])
+P_full_Q = w + (depth_full_c[1:, :] + depth_full_c[:-1, :])
 
 c = (
-    theta * (A_full_H[:, 1:] - A_full_H[:, :-1]) + (1 - theta) * w * (H_full - H_b)
+    theta * (A_full_H[:, 1:] - A_full_H[:, :-1])
+    + (1 - theta) * w * (depth_full[:, 1:] - depth_full[:, :-1])
 ) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dxQ
 d = (
     (Q_full[1:-1, 1:] - Q_full[1:-1, :-1]) / dt
