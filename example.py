@@ -138,10 +138,10 @@ solver = ca.nlpsol(
     nlp,
     {
         "ipopt": {
-            "tol": 1e-3,
-            "constr_viol_tol": 1e-3,
-            "acceptable_tol": 1e-3,
-            "acceptable_constr_viol_tol": 1e-3,
+            "tol": 1e-6,
+            "constr_viol_tol": 1e-6,
+            "acceptable_tol": 1e-6,
+            "acceptable_constr_viol_tol": 1e-6,
             "fixed_variable_treatment": "make_constraint",
         }
     },
