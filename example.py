@@ -31,7 +31,7 @@ class ChannelModel:
         C = 40.0
         H_nominal = 0.0
         Q_nominal = 100
-        self.n_theta_steps = 1  # TODO
+        self.n_theta_steps = 2
 
         # Bottom level
         dx = l / self.n_level_nodes
@@ -263,8 +263,8 @@ class NonLinearPruneCallback(BranchCallback):
         ubdelta = np.array(
             [self.get_upper_bounds(name) for name in master_model.delta_names]
         )
-        on = np.where(np.logical_and(lbdelta > 0.5, ubdelta > 0.5))[0]
-        off = np.where(np.logical_and(lbdelta < 0.5, ubdelta < 0.5))[0]
+        on, = np.where(lbdelta > 0.5)
+        off, = np.where(ubdelta < 0.5)
         ret = channel_model.solve(on, off)
         if ret[1.0]["objective"] > master_model.nonlinear_incumbent[1.0]["objective"]:
             self.prune()
@@ -275,8 +275,8 @@ class NonLinearIncumbentCallback(IncumbentCallback):
         delta_values = np.array(
             [self.get_values(name) for name in master_model.delta_names]
         )
-        on = np.where(delta_values > 0.5)[0]
-        off = np.where(delta_values < 0.5)[0]
+        on, = np.where(delta_values > 0.5)
+        off, = np.where(delta_values < 0.5)
         results = channel_model.solve(on, off)
         objective = results[1.0]["objective"]
         if objective < master_model.nonlinear_incumbent[1.0]["objective"]:
