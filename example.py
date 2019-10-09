@@ -7,7 +7,6 @@
 # Authors:  Jorn Baayen, Jakub Marecek
 
 import time, sys
-from typing import Dict, Set
 import casadi as ca
 import numpy as np
 
@@ -179,7 +178,7 @@ class ChannelModel:
         self.w_lbX = np.array(lbX, copy=True)
         self.w_ubX = np.array(ubX, copy=True)
 
-    def solve(self, delta_on: Set[int], delta_off: Set[int]) -> Dict[str, np.array]:
+    def solve(self, lbdelta, ubdelta):
         nlp = {"f": self.f, "g": self.g, "x": self.X, "p": self.theta}
         solver = ca.nlpsol(
             "nlpsol",
@@ -198,18 +197,10 @@ class ChannelModel:
             },
         )
 
-        # Fix integer variables
+        # Set bounds on integer variables
         offset = self.Q.numel() + self.H.numel()
-        for i in range(self.delta.numel()):
-            if i in delta_on:
-                self.w_lbX[offset + i] = 1.0
-                self.w_ubX[offset + i] = 1.0
-            elif i in delta_off:
-                self.w_lbX[offset + i] = 0.0
-                self.w_ubX[offset + i] = 0.0
-            else:
-                self.w_lbX[offset + i] = 0.0
-                self.w_ubX[offset + i] = 1.0
+        self.w_lbX[offset:] = ca.DM(lbdelta)
+        self.w_ubX[offset:] = ca.DM(ubdelta)
 
         # Homotopy loop
         results = {}
@@ -263,9 +254,7 @@ class NonLinearPruneCallback(BranchCallback):
         ubdelta = np.array(
             [self.get_upper_bounds(name) for name in master_model.delta_names]
         )
-        on, = np.where(lbdelta > 0.5)
-        off, = np.where(ubdelta < 0.5)
-        ret = channel_model.solve(on, off)
+        ret = channel_model.solve(lbdelta, ubdelta)
         if ret[1.0]["objective"] > master_model.nonlinear_incumbent[1.0]["objective"]:
             self.prune()
 
@@ -275,9 +264,11 @@ class NonLinearIncumbentCallback(IncumbentCallback):
         delta_values = np.array(
             [self.get_values(name) for name in master_model.delta_names]
         )
-        on, = np.where(delta_values > 0.5)
-        off, = np.where(delta_values < 0.5)
-        results = channel_model.solve(on, off)
+        lbdelta = np.zeros(len(delta_values))
+        lbdelta[np.where(delta_values > 0.5)[0]] = 1.0
+        ubdelta = np.ones(len(delta_values))
+        ubdelta[np.where(delta_values < 0.5)[0]] = 0.0
+        results = channel_model.solve(lbdelta, ubdelta)
         objective = results[1.0]["objective"]
         if objective < master_model.nonlinear_incumbent[1.0]["objective"]:
             master_model.nonlinear_incumbent.update(results)
