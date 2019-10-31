@@ -16,12 +16,11 @@ from cplex.callbacks import IncumbentCallback, BranchCallback
 
 
 class ChannelModel:
-    def __init__(self):
+    def __init__(self, n_level_nodes=10, n_time_steps=24, dt=10 * 60):
         # These parameters correspond to Table 1
-        T = 24
         dt = 10 * 60
-        times = np.arange(0, (T + 1) * dt, dt)
-        self.n_level_nodes = 10
+        times = np.arange(0, (n_time_steps + 1) * dt, dt)
+        self.n_level_nodes = n_level_nodes
         l = 10000.0
         w = 50.0
         C = 40.0
@@ -75,14 +74,14 @@ class ChannelModel:
             )
 
         # Symbols
-        self.Q = ca.MX.sym("Q", self.n_level_nodes, T)
-        self.H = ca.MX.sym("H", self.n_level_nodes, T)
-        self.delta = ca.MX.sym("delta", 1, T)
+        self.Q = ca.MX.sym("Q", self.n_level_nodes, n_time_steps)
+        self.H = ca.MX.sym("H", self.n_level_nodes, n_time_steps)
+        self.delta = ca.MX.sym("delta", 1, n_time_steps)
         self.theta = ca.MX.sym("theta")
 
         # Left boundary condition
-        self.Q_left = np.full(T + 1, 100)
-        self.Q_left[T // 3 : 2 * T // 3] = 300.0
+        self.Q_left = np.full(n_time_steps + 1, 100)
+        self.Q_left[n_time_steps // 3 : 2 * n_time_steps // 3] = 300.0
         self.Q_left = ca.DM(self.Q_left).T
 
         # Hydraulic constraints
@@ -150,16 +149,16 @@ class ChannelModel:
         lbQ = np.full(self.n_level_nodes, -np.inf)
         ubQ = np.full(self.n_level_nodes, np.inf)
 
-        lbQ = ca.repmat(ca.DM(lbQ), 1, T)
-        ubQ = ca.repmat(ca.DM(ubQ), 1, T)
-        lbH = ca.repmat(-np.inf, self.n_level_nodes, T)
-        ubH = ca.repmat(np.inf, self.n_level_nodes, T)
+        lbQ = ca.repmat(ca.DM(lbQ), 1, n_time_steps)
+        ubQ = ca.repmat(ca.DM(ubQ), 1, n_time_steps)
+        lbH = ca.repmat(-np.inf, self.n_level_nodes, n_time_steps)
+        ubH = ca.repmat(np.inf, self.n_level_nodes, n_time_steps)
 
         lbdelta = np.full(1, 0)
-        lbdelta = ca.repmat(ca.DM(lbdelta), 1, T)
+        lbdelta = ca.repmat(ca.DM(lbdelta), 1, n_time_steps)
 
         ubdelta = np.full(1, 1)
-        ubdelta = ca.repmat(ca.DM(ubdelta), 1, T)
+        ubdelta = ca.repmat(ca.DM(ubdelta), 1, n_time_steps)
 
         # Optimization problem
         assert self.Q.size() == lbQ.size()
