@@ -12,10 +12,7 @@ import numpy as np
 
 import cplex
 from cplex.exceptions import CplexError
-from cplex.callbacks import (
-    IncumbentCallback,
-    BranchCallback,
-)
+from cplex.callbacks import IncumbentCallback, BranchCallback
 
 
 class ChannelModel:
@@ -171,12 +168,8 @@ class ChannelModel:
         assert self.H.size() == ubH.size()
 
         self.X = ca.veccat(self.Q, self.H, self.delta)
-        lbX = ca.veccat(lbQ, lbH, lbdelta)
-        ubX = ca.veccat(ubQ, ubH, ubdelta)
-
-        # Solve
-        self.w_lbX = np.array(lbX, copy=True)
-        self.w_ubX = np.array(ubX, copy=True)
+        self.lbX = ca.veccat(lbQ, lbH, lbdelta)
+        self.ubX = ca.veccat(ubQ, ubH, ubdelta)
 
     def solve(self, lbdelta, ubdelta):
         nlp = {"f": self.f, "g": self.g, "x": self.X, "p": self.theta}
@@ -198,9 +191,16 @@ class ChannelModel:
         )
 
         # Set bounds on integer variables
+        w_lbX = np.array(
+            self.lbX, copy=True
+        )  # Make a copy to ensure this method remains re-entrant
+        w_ubX = np.array(
+            self.ubX, copy=True
+        )  # Make a copy to ensure this method remains re-entrant
+
         offset = self.Q.numel() + self.H.numel()
-        self.w_lbX[offset:] = ca.DM(lbdelta)
-        self.w_ubX[offset:] = ca.DM(ubdelta)
+        w_lbX[offset:] = ca.DM(lbdelta)
+        w_ubX[offset:] = ca.DM(ubdelta)
 
         # Homotopy loop
         results = {}
@@ -211,12 +211,7 @@ class ChannelModel:
             theta_values = [1.0]
         for theta_value in theta_values:
             solution = solver(
-                lbx=self.w_lbX,
-                ubx=self.w_ubX,
-                lbg=self.lbg,
-                ubg=self.ubg,
-                p=theta_value,
-                x0=x0,
+                lbx=w_lbX, ubx=w_ubX, lbg=self.lbg, ubg=self.ubg, p=theta_value, x0=x0
             )
             if solver.stats()["return_status"] != "Solve_Succeeded":
                 raise Exception(
@@ -293,6 +288,9 @@ class MasterModel:
         self.c.parameters.mip.limits.populate.set(1e6)
         # Disable presolve, as we don't want to get rid of any "unused" (from the CPLEX point of view) boolean variables
         self.c.parameters.preprocessing.presolve.set(0)
+        # Parallelization (disabled by default)
+        self.c.parameters.threads.set(1)
+        self.c.parameters.parallel.set(self.c.parameters.parallel.values.deterministic)
 
         # Nonlinear incumbent
         self.nonlinear_incumbent = {1.0: {"objective": np.inf}}
