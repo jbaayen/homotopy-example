@@ -16,12 +16,15 @@ from cplex.callbacks import IncumbentCallback, BranchCallback
 
 
 class ChannelModel:
-    def __init__(self, n_level_nodes=10, n_time_steps=24, dt=10 * 60):
+    def __init__(self, n_weirs, n_level_nodes, n_time_steps, dt):
+        assert n_level_nodes % n_weirs == 0
+
         # These parameters correspond to Table 1
         dt = 10 * 60
         times = np.arange(0, (n_time_steps + 1) * dt, dt)
         self.n_level_nodes = n_level_nodes
-        l = 10000.0
+        n_level_nodes_per_reach = n_level_nodes // n_weirs
+        reach_length = 10000.0
         w = 50.0
         C = 40.0
         H_nominal = 0.0
@@ -29,12 +32,15 @@ class ChannelModel:
         self.n_theta_steps = 2
 
         # Bottom level
-        dx = l / self.n_level_nodes
-        dydx = -0.2 / l
-        H_b = np.linspace(
-            -5.0 + dydx * 0.5 * dx,
-            -5.0 + dydx * l - dydx * 0.5 * dx,
-            self.n_level_nodes,
+        dx = reach_length / n_level_nodes_per_reach
+        dydx = -0.2 / reach_length
+        H_b = np.tile(
+            np.linspace(
+                -5.0 + dydx * 0.5 * dx,
+                -5.0 + dydx * reach_length - dydx * 0.5 * dx,
+                n_level_nodes_per_reach,
+            ),
+            n_weirs,
         )
 
         # Generic constants
@@ -48,8 +54,12 @@ class ChannelModel:
         A_nominal = w * (H_nominal - np.mean(H_b))
         P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 
-        dxH = ca.MX(ca.repmat(l / self.n_level_nodes, self.n_level_nodes - 1))
-        dxQ = ca.MX(ca.repmat(l / self.n_level_nodes, self.n_level_nodes))
+        dxH = ca.MX(
+            ca.repmat(reach_length / n_level_nodes_per_reach, self.n_level_nodes - 1)
+        )
+        dxQ = ca.MX(
+            ca.repmat(reach_length / n_level_nodes_per_reach, self.n_level_nodes)
+        )
 
         # Smoothed absolute value function
         sabs = lambda x: ca.sqrt(x ** 2 + eps)
@@ -63,20 +73,19 @@ class ChannelModel:
         sH = lambda x: 1 / (1 + ca.exp(-K * x))
 
         # Compute steady state initial condition
-        self.Q0 = np.full(self.n_level_nodes, 100.0)
-        self.H0 = np.full(self.n_level_nodes, 0.0)
-        for i in range(1, self.n_level_nodes):
-            A = w / 2.0 * (self.H0[i - 1] - H_b[i - 1] + self.H0[i] - H_b[i])
-            P = w + self.H0[i - 1] - H_b[i - 1] + self.H0[i] - H_b[i]
-            self.H0[i] = (
-                self.H0[i - 1]
-                - dx * (P / A ** 3) * sabs(self.Q0[i]) * self.Q0[i] / C ** 2
-            )
+        Q0 = np.full(n_level_nodes_per_reach, 100.0)
+        H0 = np.full(n_level_nodes_per_reach, 0.0)
+        for i in range(1, n_level_nodes_per_reach):
+            A = w / 2.0 * (H0[i - 1] - H_b[i - 1] + H0[i] - H_b[i])
+            P = w + H0[i - 1] - H_b[i - 1] + H0[i] - H_b[i]
+            H0[i] = H0[i - 1] - dx * (P / A ** 3) * sabs(Q0[i]) * Q0[i] / C ** 2
+        self.Q0 = np.tile(Q0, n_weirs)
+        self.H0 = np.tile(H0, n_weirs)
 
         # Symbols
         self.Q = ca.MX.sym("Q", self.n_level_nodes, n_time_steps)
         self.H = ca.MX.sym("H", self.n_level_nodes, n_time_steps)
-        self.delta = ca.MX.sym("delta", 1, n_time_steps)
+        self.delta = ca.MX.sym("delta", n_weirs, n_time_steps)
         self.theta = ca.MX.sym("theta")
 
         # Left boundary condition
@@ -93,49 +102,206 @@ class ChannelModel:
         A_full_Q = ca.vertcat(
             A_full_H[0, :], 0.5 * (A_full_H[1:, :] + A_full_H[:-1, :]), A_full_H[-1, :]
         )
-        P_full_Q = w + (depth_full_c[1:, :] + depth_full_c[:-1, :])
+        P_full_H = w + 2 * depth_full_c
+        P_full_Q = ca.vertcat(
+            P_full_H[0, :], 0.5 * (P_full_H[1:, :] + P_full_H[:-1, :]), P_full_H[-1, :]
+        )
 
         c = (
             self.theta * (A_full_H[:, 1:] - A_full_H[:, :-1])
             + (1 - self.theta) * w * (depth_full[:, 1:] - depth_full[:, :-1])
         ) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dxQ
-        d = (
-            (Q_full[1:-1, 1:] - Q_full[1:-1, :-1]) / dt
-            + self.theta
-            * (
-                2
-                * Q_full[1:-1, :-1]
-                / A_full_Q[1:-1, :-1]
-                * (
-                    sH(Q_full[1:-1, :-1])
-                    * (Q_full[1:-1, :-1] - Q_full[0:-2, :-1])
-                    / dxQ[:-1]
-                    + (1 - sH(Q_full[1:-1, :-1]))
-                    * (Q_full[2:, :-1] - Q_full[1:-1, :-1])
-                    / dxQ[1:]
-                )
-                - (Q_full[1:-1, :-1] / A_full_Q[1:-1, :-1]) ** 2
-                * (A_full_H[1:, :-1] - A_full_H[:-1, :-1])
-                / dxH
-            )
-            + g
-            * (self.theta * A_full_Q[1:-1, :-1] + (1 - self.theta) * A_nominal)
-            * (H_full[1:, 1:] - H_full[:-1, 1:])
-            / dxH
-            + g
-            * (
+        d = ca.vertcat(
+            *(
                 self.theta
-                * P_full_Q[:, :-1]
-                * sabs(Q_full[1:-1, :-1])
-                / A_full_Q[1:-1, :-1] ** 2
-                + (1 - self.theta) * P_nominal * sabs(Q_nominal) / A_nominal ** 2
+                * (
+                    2
+                    * Q_full[
+                        weir * n_level_nodes_per_reach
+                        + 1 : (weir + 1) * n_level_nodes_per_reach,
+                        :-1,
+                    ]
+                    / A_full_Q[
+                        weir * n_level_nodes_per_reach
+                        + 1 : (weir + 1) * n_level_nodes_per_reach,
+                        :-1,
+                    ]
+                    * (
+                        sH(
+                            Q_full[
+                                weir * n_level_nodes_per_reach
+                                + 1 : (weir + 1) * n_level_nodes_per_reach,
+                                :-1,
+                            ]
+                        )
+                        * (
+                            Q_full[
+                                weir * n_level_nodes_per_reach
+                                + 1 : (weir + 1) * n_level_nodes_per_reach,
+                                :-1,
+                            ]
+                            - Q_full[
+                                weir
+                                * n_level_nodes_per_reach : (weir + 1)
+                                * n_level_nodes_per_reach
+                                - 1,
+                                :-1,
+                            ]
+                        )
+                        / dxQ[
+                            weir
+                            * n_level_nodes_per_reach : (weir + 1)
+                            * n_level_nodes_per_reach
+                            - 1
+                        ]
+                        + (
+                            1
+                            - sH(
+                                Q_full[
+                                    weir * n_level_nodes_per_reach
+                                    + 1 : (weir + 1) * n_level_nodes_per_reach,
+                                    :-1,
+                                ]
+                            )
+                        )
+                        * (
+                            Q_full[
+                                weir * n_level_nodes_per_reach
+                                + 2 : (weir + 1) * n_level_nodes_per_reach
+                                + 1,
+                                :-1,
+                            ]
+                            - Q_full[
+                                weir * n_level_nodes_per_reach
+                                + 1 : (weir + 1) * n_level_nodes_per_reach,
+                                :-1,
+                            ]
+                        )
+                        / dxQ[
+                            weir * n_level_nodes_per_reach
+                            + 1 : (weir + 1) * n_level_nodes_per_reach
+                        ]
+                    )
+                    - (
+                        Q_full[
+                            weir * n_level_nodes_per_reach
+                            + 1 : (weir + 1) * n_level_nodes_per_reach,
+                            :-1,
+                        ]
+                        / A_full_Q[
+                            weir * n_level_nodes_per_reach
+                            + 1 : (weir + 1) * n_level_nodes_per_reach,
+                            :-1,
+                        ]
+                    )
+                    ** 2
+                    * (
+                        A_full_H[
+                            weir * n_level_nodes_per_reach
+                            + 1 : (weir + 1) * n_level_nodes_per_reach,
+                            :-1,
+                        ]
+                        - A_full_H[
+                            weir
+                            * n_level_nodes_per_reach : (weir + 1)
+                            * n_level_nodes_per_reach
+                            - 1,
+                            :-1,
+                        ]
+                    )
+                    / dxH[
+                        weir
+                        * n_level_nodes_per_reach : (weir + 1)
+                        * n_level_nodes_per_reach
+                        - 1
+                    ]
+                )
+                + (
+                    Q_full[
+                        weir * n_level_nodes_per_reach
+                        + 1 : (weir + 1) * n_level_nodes_per_reach,
+                        1:,
+                    ]
+                    - Q_full[
+                        weir * n_level_nodes_per_reach
+                        + 1 : (weir + 1) * n_level_nodes_per_reach,
+                        :-1,
+                    ]
+                )
+                / dt
+                + g
+                * (
+                    self.theta
+                    * A_full_Q[
+                        weir * n_level_nodes_per_reach
+                        + 1 : (weir + 1) * n_level_nodes_per_reach,
+                        :-1,
+                    ]
+                    + (1 - self.theta) * A_nominal
+                )
+                * (
+                    H_full[
+                        weir * n_level_nodes_per_reach
+                        + 1 : (weir + 1) * n_level_nodes_per_reach,
+                        1:,
+                    ]
+                    - H_full[
+                        weir
+                        * n_level_nodes_per_reach : (weir + 1)
+                        * n_level_nodes_per_reach
+                        - 1,
+                        1:,
+                    ]
+                )
+                / dxH[
+                    weir
+                    * n_level_nodes_per_reach : (weir + 1)
+                    * n_level_nodes_per_reach
+                    - 1
+                ]
+                + g
+                * (
+                    self.theta
+                    * P_full_Q[
+                        weir * n_level_nodes_per_reach
+                        + 1 : (weir + 1) * n_level_nodes_per_reach,
+                        :-1,
+                    ]
+                    * sabs(
+                        Q_full[
+                            weir * n_level_nodes_per_reach
+                            + 1 : (weir + 1) * n_level_nodes_per_reach,
+                            :-1,
+                        ]
+                    )
+                    / A_full_Q[
+                        weir * n_level_nodes_per_reach
+                        + 1 : (weir + 1) * n_level_nodes_per_reach,
+                        :-1,
+                    ]
+                    ** 2
+                    + (1 - self.theta) * P_nominal * sabs(Q_nominal) / A_nominal ** 2
+                )
+                * Q_full[
+                    weir * n_level_nodes_per_reach
+                    + 1 : (weir + 1) * n_level_nodes_per_reach,
+                    1:,
+                ]
+                / C ** 2
+                for weir in range(n_weirs)
             )
-            * Q_full[1:-1, 1:]
-            / C ** 2
-        )
+        )  # TODO
+
+        assert d.numel() == self.Q.numel() - n_weirs * n_time_steps
 
         # Relate boolean variables to weir flow
-        e = self.Q[self.n_level_nodes - 1, :] - (100 + 100 * self.delta)
+        e = ca.vertcat(
+            *(
+                self.Q[(weir + 1) * n_level_nodes_per_reach - 1, :]
+                - (100 + 100 * self.delta[weir, :])
+                for weir in range(n_weirs)
+            )
+        )
 
         # Constraints
         self.g = ca.veccat(c, d, e)
@@ -154,10 +320,10 @@ class ChannelModel:
         lbH = ca.repmat(-np.inf, self.n_level_nodes, n_time_steps)
         ubH = ca.repmat(np.inf, self.n_level_nodes, n_time_steps)
 
-        lbdelta = np.full(1, 0)
+        lbdelta = np.full(n_weirs, 0)
         lbdelta = ca.repmat(ca.DM(lbdelta), 1, n_time_steps)
 
-        ubdelta = np.full(1, 1)
+        ubdelta = np.full(n_weirs, 1)
         ubdelta = ca.repmat(ca.DM(ubdelta), 1, n_time_steps)
 
         # Optimization problem
@@ -317,7 +483,7 @@ class MasterModel:
 
 
 # Create and solve model
-channel_model = ChannelModel()
+channel_model = ChannelModel(n_level_nodes=10, n_time_steps=24, dt=10 * 60, n_weirs=1)
 master_model = MasterModel(channel_model)
 results = master_model.solve()
 print(f"Solved to objective value: {results[1.0]['objective']}")
