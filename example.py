@@ -5,6 +5,12 @@
 # Copyright (C) 2019 IBM
 #
 # Authors:  Jorn Baayen, Jakub Marecek
+#
+# Note that this is a rather naive implementation of the continuation algorithm,
+# and a naive discretization of the Saint-Venant equations exhibiting several known
+# practical issues (while still, however, satisfying the mathematical requirements).
+# For real-life applications, it is suggested to use an enterprise implementation,
+# such as KISTERS Real Time Optimization (RTO).
 
 import time, sys
 import casadi as ca
@@ -20,12 +26,22 @@ class OptimizationError(Exception):
 
 
 class ChannelModel:
-    def __init__(self, n_weirs, n_level_nodes, n_time_steps, dt):
+    def __init__(
+        self, n_weirs, n_level_nodes, horizon_length, hydraulic_dt, control_dt
+    ):
         assert n_level_nodes % n_weirs == 0
+        assert horizon_length % hydraulic_dt == 0
+        assert horizon_length % control_dt == 0
 
         # These parameters correspond to Table 1
-        dt = 10 * 60
-        self.times = np.arange(0, (n_time_steps + 1) * dt, dt)
+        n_hydraulic_time_steps = horizon_length // hydraulic_dt
+        n_control_time_steps = horizon_length // control_dt
+        control_times = np.arange(
+            0, (n_control_time_steps + 1) * control_dt, control_dt
+        )
+        self.hydraulic_times = np.arange(
+            0, (n_hydraulic_time_steps + 1) * hydraulic_dt, hydraulic_dt
+        )
         self.n_level_nodes = n_level_nodes
         n_level_nodes_per_reach = n_level_nodes // n_weirs
         reach_length = 10000.0
@@ -51,8 +67,8 @@ class ChannelModel:
         g = 9.81
         eps = 1e-12
         K = 10
-        alpha = 20
-        min_depth = 1e-3
+        alpha = 10
+        min_depth = 1e-2
 
         # Derived quantities
         A_nominal = w * (H_nominal - np.mean(H_b))
@@ -87,14 +103,16 @@ class ChannelModel:
         self.H0 = np.tile(H0, n_weirs)
 
         # Symbols
-        self.Q = ca.MX.sym("Q", self.n_level_nodes, n_time_steps)
-        self.H = ca.MX.sym("H", self.n_level_nodes, n_time_steps)
-        self.delta = ca.MX.sym("delta", n_weirs, n_time_steps)
+        self.Q = ca.MX.sym("Q", self.n_level_nodes, n_hydraulic_time_steps)
+        self.H = ca.MX.sym("H", self.n_level_nodes, n_hydraulic_time_steps)
+        self.delta = ca.MX.sym("delta", n_weirs, n_control_time_steps)
         self.theta = ca.MX.sym("theta")
 
         # Left boundary condition
-        self.Q_left = np.full(n_time_steps + 1, 100)
-        self.Q_left[n_time_steps // 3 : 2 * n_time_steps // 3] = 300.0
+        self.Q_left = np.full(n_hydraulic_time_steps + 1, 100)
+        self.Q_left[
+            n_hydraulic_time_steps // 3 : 2 * n_hydraulic_time_steps // 3
+        ] = 300.0
         self.Q_left = ca.DM(self.Q_left).T
 
         # Hydraulic constraints
@@ -114,7 +132,7 @@ class ChannelModel:
         c = (
             self.theta * (A_full_H[:, 1:] - A_full_H[:, :-1])
             + (1 - self.theta) * w * (depth_full[:, 1:] - depth_full[:, :-1])
-        ) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dxQ
+        ) / hydraulic_dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dxQ
         d = ca.vertcat(
             *(
                 self.theta
@@ -232,7 +250,7 @@ class ChannelModel:
                         :-1,
                     ]
                 )
-                / dt
+                / hydraulic_dt
                 + g
                 * (
                     self.theta
@@ -296,13 +314,19 @@ class ChannelModel:
             )
         )
 
-        assert d.numel() == self.Q.numel() - n_weirs * n_time_steps
+        assert d.numel() == self.Q.numel() - n_weirs * n_hydraulic_time_steps
 
         # Relate boolean variables to weir flow
+        delta_full = ca.horzcat(ca.repmat(0, n_weirs, 1), self.delta)
+        delta_interpolated = ca.transpose(
+            ca.interp1d(
+                control_times, ca.transpose(delta_full), self.hydraulic_times, "linear"
+            )
+        )
         e = ca.vertcat(
             *(
                 self.Q[(weir + 1) * n_level_nodes_per_reach - 1, :]
-                - (100 + 100 * self.delta[weir, :])
+                - (100 + 100 * delta_interpolated[weir, 1:])
                 for weir in range(n_weirs)
             )
         )
@@ -319,16 +343,16 @@ class ChannelModel:
         lbQ = np.full(self.n_level_nodes, -np.inf)
         ubQ = np.full(self.n_level_nodes, np.inf)
 
-        lbQ = ca.repmat(ca.DM(lbQ), 1, n_time_steps)
-        ubQ = ca.repmat(ca.DM(ubQ), 1, n_time_steps)
-        lbH = ca.repmat(-np.inf, self.n_level_nodes, n_time_steps)
-        ubH = ca.repmat(np.inf, self.n_level_nodes, n_time_steps)
+        lbQ = ca.repmat(ca.DM(lbQ), 1, n_hydraulic_time_steps)
+        ubQ = ca.repmat(ca.DM(ubQ), 1, n_hydraulic_time_steps)
+        lbH = ca.repmat(-np.inf, self.n_level_nodes, n_hydraulic_time_steps)
+        ubH = ca.repmat(np.inf, self.n_level_nodes, n_hydraulic_time_steps)
 
         lbdelta = np.full(n_weirs, 0)
-        lbdelta = ca.repmat(ca.DM(lbdelta), 1, n_time_steps)
+        lbdelta = ca.repmat(ca.DM(lbdelta), 1, n_control_time_steps)
 
         ubdelta = np.full(n_weirs, 1)
-        ubdelta = ca.repmat(ca.DM(ubdelta), 1, n_time_steps)
+        ubdelta = ca.repmat(ca.DM(ubdelta), 1, n_control_time_steps)
 
         # Optimization problem
         assert self.Q.size() == lbQ.size()
@@ -347,6 +371,7 @@ class ChannelModel:
             "ipopt",
             nlp,
             {
+                "expand": True,
                 "ipopt": {
                     "tol": 1e-3,
                     "constr_viol_tol": 1e-3,
@@ -355,7 +380,16 @@ class ChannelModel:
                     "print_level": 0,
                     "print_timing_statistics": "no",
                     "fixed_variable_treatment": "make_constraint",
-                }
+                    "linear_system_scaling": "none",
+                    "nlp_scaling_method": "none",
+                    # The following two settings are there to limit time spent
+                    # on solutions with extensive drying of the canal, which
+                    # are expensive to compute.  This is one of the hacks
+                    # we have to insert to make this naive implementation run.
+                    # Such hacks are not present in RTO.
+                    "max_iter": 300,
+                    "max_cpu_time": 3,
+                },
             },
         )
 
@@ -421,10 +455,20 @@ class NonLinearPruneCallback(BranchCallback):
         try:
             ret = channel_model.solve(lbdelta, ubdelta)
         except OptimizationError:
-            pass
+            # The following two settings are there to limit time spent
+            # on solutions with extensive drying of the canal, which
+            # are expensive to compute.  This is one of the hacks
+            # we have to insert to make this naive implementation run.
+            # Such hacks are not present in RTO.
+            self.prune()
+            print(f"pruned branch whose relaxation took too long to solve")
         else:
-            if ret[1.0]["objective"] > master_model.nonlinear_incumbent[1.0]["objective"]:
+            if (
+                ret[1.0]["objective"]
+                > master_model.nonlinear_incumbent[1.0]["objective"]
+            ):
                 self.prune()
+                print(f"pruned branch with relaxation objective value {ret[1.0]['objective']}")
 
 
 class NonLinearIncumbentCallback(IncumbentCallback):
@@ -444,6 +488,7 @@ class NonLinearIncumbentCallback(IncumbentCallback):
             objective = results[1.0]["objective"]
             if objective < master_model.nonlinear_incumbent[1.0]["objective"]:
                 master_model.nonlinear_incumbent.update(results)
+                print(f"updated incumbent with objective value {objective}")
             else:
                 self.reject()
 
@@ -495,8 +540,14 @@ class MasterModel:
 
 
 # Create and solve model
-channel_model = ChannelModel(n_level_nodes=10, n_time_steps=72, dt=10 * 60, n_weirs=1)
+channel_model = ChannelModel(
+    n_level_nodes=10,
+    horizon_length=24 * 60 * 60,
+    hydraulic_dt=10 * 60,
+    control_dt=60 * 60,
+    n_weirs=1,
+)
 master_model = MasterModel(channel_model)
 results = master_model.solve()
-times = master_model.times  # For compatibility with plotting scripts
+times = channel_model.hydraulic_times  # For compatibility with plotting scripts
 print(f"Solved to objective value: {results[1.0]['objective']}")
