@@ -498,4 +498,5 @@ class MasterModel:
 channel_model = ChannelModel(n_level_nodes=10, n_time_steps=72, dt=10 * 60, n_weirs=1)
 master_model = MasterModel(channel_model)
 results = master_model.solve()
+times = master_model.times  # For compatibility with plotting scripts
 print(f"Solved to objective value: {results[1.0]['objective']}")
