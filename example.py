@@ -320,7 +320,7 @@ class ChannelModel:
         delta_full = ca.horzcat(ca.repmat(0, n_weirs, 1), self.delta)
         delta_interpolated = ca.transpose(
             ca.interp1d(
-                control_times, ca.transpose(delta_full), self.hydraulic_times, "linear"
+                control_times, ca.transpose(delta_full), self.hydraulic_times, "linear", True
             )
         )
         e = ca.vertcat(
