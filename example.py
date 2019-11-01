@@ -15,13 +15,17 @@ from cplex.exceptions import CplexError
 from cplex.callbacks import IncumbentCallback, BranchCallback
 
 
+class OptimizationError(Exception):
+    pass
+
+
 class ChannelModel:
     def __init__(self, n_weirs, n_level_nodes, n_time_steps, dt):
         assert n_level_nodes % n_weirs == 0
 
         # These parameters correspond to Table 1
         dt = 10 * 60
-        times = np.arange(0, (n_time_steps + 1) * dt, dt)
+        self.times = np.arange(0, (n_time_steps + 1) * dt, dt)
         self.n_level_nodes = n_level_nodes
         n_level_nodes_per_reach = n_level_nodes // n_weirs
         reach_length = 10000.0
@@ -46,7 +50,7 @@ class ChannelModel:
         # Generic constants
         g = 9.81
         eps = 1e-12
-        K = 50
+        K = 10
         alpha = 20
         min_depth = 1e-3
 
@@ -290,7 +294,7 @@ class ChannelModel:
                 / C ** 2
                 for weir in range(n_weirs)
             )
-        )  # TODO
+        )
 
         assert d.numel() == self.Q.numel() - n_weirs * n_time_steps
 
@@ -379,7 +383,7 @@ class ChannelModel:
                 lbx=w_lbX, ubx=w_ubX, lbg=self.lbg, ubg=self.ubg, p=theta_value, x0=x0
             )
             if solver.stats()["return_status"] != "Solve_Succeeded":
-                raise Exception(
+                raise OptimizationError(
                     "Solve failed with status {}".format(
                         solver.stats()["return_status"]
                     )
@@ -414,9 +418,13 @@ class NonLinearPruneCallback(BranchCallback):
         ubdelta = np.array(
             [self.get_upper_bounds(name) for name in master_model.delta_names]
         )
-        ret = channel_model.solve(lbdelta, ubdelta)
-        if ret[1.0]["objective"] > master_model.nonlinear_incumbent[1.0]["objective"]:
-            self.prune()
+        try:
+            ret = channel_model.solve(lbdelta, ubdelta)
+        except OptimizationError:
+            pass
+        else:
+            if ret[1.0]["objective"] > master_model.nonlinear_incumbent[1.0]["objective"]:
+                self.prune()
 
 
 class NonLinearIncumbentCallback(IncumbentCallback):
@@ -428,12 +436,16 @@ class NonLinearIncumbentCallback(IncumbentCallback):
         lbdelta[np.where(delta_values > 0.5)[0]] = 1.0
         ubdelta = np.ones(len(delta_values))
         ubdelta[np.where(delta_values < 0.5)[0]] = 0.0
-        results = channel_model.solve(lbdelta, ubdelta)
-        objective = results[1.0]["objective"]
-        if objective < master_model.nonlinear_incumbent[1.0]["objective"]:
-            master_model.nonlinear_incumbent.update(results)
-        else:
+        try:
+            results = channel_model.solve(lbdelta, ubdelta)
+        except OptimizationError:
             self.reject()
+        else:
+            objective = results[1.0]["objective"]
+            if objective < master_model.nonlinear_incumbent[1.0]["objective"]:
+                master_model.nonlinear_incumbent.update(results)
+            else:
+                self.reject()
 
 
 class MasterModel:
@@ -483,7 +495,7 @@ class MasterModel:
 
 
 # Create and solve model
-channel_model = ChannelModel(n_level_nodes=10, n_time_steps=24, dt=10 * 60, n_weirs=1)
+channel_model = ChannelModel(n_level_nodes=10, n_time_steps=72, dt=10 * 60, n_weirs=1)
 master_model = MasterModel(channel_model)
 results = master_model.solve()
 print(f"Solved to objective value: {results[1.0]['objective']}")
