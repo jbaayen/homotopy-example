@@ -15,6 +15,10 @@
 import time, sys
 import casadi as ca
 import numpy as np
+import multiprocessing
+import threading
+import pickle
+import pprint
 
 import cplex
 from cplex.exceptions import CplexError
@@ -382,13 +386,15 @@ class ChannelModel:
                     "fixed_variable_treatment": "make_constraint",
                     "linear_system_scaling": "none",
                     "nlp_scaling_method": "none",
+                    #"linear_solver": "ma57",  # Required for parallel mode, as mumps is not thread-safe
+                    #"ma57_automatic_scaling": "no",
                     # The following two settings are there to limit time spent
                     # on solutions with extensive drying of the canal, which
                     # are expensive to compute.  This is one of the hacks
                     # we have to insert to make this naive implementation run.
                     # Such hacks are not present in RTO.
                     "max_iter": 300,
-                    "max_cpu_time": 3,
+                    "max_cpu_time": 6,
                 },
             },
         )
@@ -486,11 +492,13 @@ class NonLinearIncumbentCallback(IncumbentCallback):
             self.reject()
         else:
             objective = results[1.0]["objective"]
-            if objective < master_model.nonlinear_incumbent[1.0]["objective"]:
-                master_model.nonlinear_incumbent.update(results)
-                print(f"updated incumbent with objective value {objective}")
-            else:
-                self.reject()
+            #with master_model.nonlinear_incumbent_lock:
+            if True:
+                if objective < master_model.nonlinear_incumbent[1.0]["objective"]:
+                    master_model.nonlinear_incumbent.update(results)
+                    print(f"updated incumbent with objective value {objective}")
+                else:
+                    self.reject()
 
 
 class MasterModel:
@@ -510,12 +518,13 @@ class MasterModel:
         self.c.parameters.mip.limits.populate.set(1e6)
         # Disable presolve, as we don't want to get rid of any "unused" (from the CPLEX point of view) boolean variables
         self.c.parameters.preprocessing.presolve.set(0)
-        # Parallelization (disabled by default)
-        self.c.parameters.threads.set(1)
+        # Parallelization
+        self.c.parameters.threads.set(1) #multiprocessing.cpu_count())
         self.c.parameters.parallel.set(self.c.parameters.parallel.values.deterministic)
 
         # Nonlinear incumbent
         self.nonlinear_incumbent = {1.0: {"objective": np.inf}}
+        self.nonlinear_incumbent_lock = threading.Lock()
 
         # Callbacks
         self.c.register_callback(NonLinearPruneCallback)
@@ -540,14 +549,20 @@ class MasterModel:
 
 
 # Create and solve model
+n_weirs = 1
 channel_model = ChannelModel(
-    n_level_nodes=10,
+    n_level_nodes=10 * n_weirs,
     horizon_length=24 * 60 * 60,
     hydraulic_dt=10 * 60,
-    control_dt=60 * 60,
-    n_weirs=1,
+    control_dt=4 * 60 * 60,
+    n_weirs=n_weirs,
 )
 master_model = MasterModel(channel_model)
+
 results = master_model.solve()
 times = channel_model.hydraulic_times  # For compatibility with plotting scripts
+
+pprint.pprint(results)
+with open("results.p", "wb") as f:
+    pickle.dump(results, f)
 print(f"Solved to objective value: {results[1.0]['objective']}")
