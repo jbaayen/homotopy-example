@@ -97,20 +97,23 @@ class ChannelModel:
         sH = lambda x: 1 / (1 + ca.exp(-K * x))
 
         # Compute steady state initial condition
-        Q0 = np.full(n_level_nodes_per_reach, 100.0)
-        H0 = np.full(n_level_nodes_per_reach, 0.0)
+        self.Q0 = np.full(n_level_nodes_per_reach, 100.0)
+        self.H0 = np.full(n_level_nodes_per_reach, 0.0)
         for i in range(1, n_level_nodes_per_reach):
-            A = w / 2.0 * (H0[i - 1] - H_b[i - 1] + H0[i] - H_b[i])
-            P = w + H0[i - 1] - H_b[i - 1] + H0[i] - H_b[i]
-            H0[i] = H0[i - 1] - dx * (P / A ** 3) * sabs(Q0[i]) * Q0[i] / C ** 2
-        self.Q0 = np.tile(Q0, n_weirs)
-        self.H0 = np.tile(H0, n_weirs)
+            A = w / 2.0 * (self.H0[i - 1] - H_b[i - 1] + self.H0[i] - H_b[i])
+            P = w + self.H0[i - 1] - H_b[i - 1] + self.H0[i] - H_b[i]
+            self.H0[i] = (
+                self.H0[i - 1]
+                - dx * (P / A ** 3) * sabs(self.Q0[i]) * self.Q0[i] / C ** 2
+            )
+        self.Q0 = np.tile(self.Q0, n_weirs)
+        self.H0 = np.tile(self.H0, n_weirs)
 
         # Symbols
-        self.Q = ca.MX.sym("Q", self.n_level_nodes, n_hydraulic_time_steps)
-        self.H = ca.MX.sym("H", self.n_level_nodes, n_hydraulic_time_steps)
-        self.delta = ca.MX.sym("delta", n_weirs, n_control_time_steps)
-        self.theta = ca.MX.sym("theta")
+        Q = ca.MX.sym("Q", self.n_level_nodes, n_hydraulic_time_steps)
+        H = ca.MX.sym("H", self.n_level_nodes, n_hydraulic_time_steps)
+        delta = ca.MX.sym("delta", n_weirs, n_control_time_steps)
+        theta = ca.MX.sym("theta")
 
         # Left boundary condition
         self.Q_left = np.full(n_hydraulic_time_steps + 1, 100)
@@ -120,8 +123,8 @@ class ChannelModel:
         self.Q_left = ca.DM(self.Q_left).T
 
         # Hydraulic constraints
-        Q_full = ca.vertcat(self.Q_left, ca.horzcat(self.Q0, self.Q))
-        H_full = ca.horzcat(self.H0, self.H)
+        Q_full = ca.vertcat(self.Q_left, ca.horzcat(self.Q0, Q))
+        H_full = ca.horzcat(self.H0, H)
         depth_full = H_full - H_b
         depth_full_c = smax(min_depth, depth_full)
         A_full_H = w * depth_full_c
@@ -134,12 +137,12 @@ class ChannelModel:
         )
 
         c = (
-            self.theta * (A_full_H[:, 1:] - A_full_H[:, :-1])
-            + (1 - self.theta) * w * (depth_full[:, 1:] - depth_full[:, :-1])
+            theta * (A_full_H[:, 1:] - A_full_H[:, :-1])
+            + (1 - theta) * w * (depth_full[:, 1:] - depth_full[:, :-1])
         ) / hydraulic_dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dxQ
         d = ca.vertcat(
             *(
-                self.theta
+                theta
                 * (
                     2
                     * Q_full[
@@ -257,13 +260,13 @@ class ChannelModel:
                 / hydraulic_dt
                 + g
                 * (
-                    self.theta
+                    theta
                     * A_full_Q[
                         weir * n_level_nodes_per_reach
                         + 1 : (weir + 1) * n_level_nodes_per_reach,
                         :-1,
                     ]
-                    + (1 - self.theta) * A_nominal
+                    + (1 - theta) * A_nominal
                 )
                 * (
                     H_full[
@@ -287,7 +290,7 @@ class ChannelModel:
                 ]
                 + g
                 * (
-                    self.theta
+                    theta
                     * P_full_Q[
                         weir * n_level_nodes_per_reach
                         + 1 : (weir + 1) * n_level_nodes_per_reach,
@@ -306,7 +309,7 @@ class ChannelModel:
                         :-1,
                     ]
                     ** 2
-                    + (1 - self.theta) * P_nominal * sabs(Q_nominal) / A_nominal ** 2
+                    + (1 - theta) * P_nominal * sabs(Q_nominal) / A_nominal ** 2
                 )
                 * Q_full[
                     weir * n_level_nodes_per_reach
@@ -318,30 +321,34 @@ class ChannelModel:
             )
         )
 
-        assert d.numel() == self.Q.numel() - n_weirs * n_hydraulic_time_steps
+        assert d.numel() == Q.numel() - n_weirs * n_hydraulic_time_steps
 
         # Relate boolean variables to weir flow
-        delta_full = ca.horzcat(ca.repmat(0, n_weirs, 1), self.delta)
+        delta_full = ca.horzcat(ca.repmat(0, n_weirs, 1), delta)
         delta_interpolated = ca.transpose(
             ca.interp1d(
-                control_times, ca.transpose(delta_full), self.hydraulic_times, "linear", True
+                control_times,
+                ca.transpose(delta_full),
+                self.hydraulic_times,
+                "linear",
+                True,
             )
         )
         e = ca.vertcat(
             *(
-                self.Q[(weir + 1) * n_level_nodes_per_reach - 1, :]
+                Q[(weir + 1) * n_level_nodes_per_reach - 1, :]
                 - (100 + 100 * delta_interpolated[weir, 1:])
                 for weir in range(n_weirs)
             )
         )
 
         # Constraints
-        self.g = ca.veccat(c, d, e)
-        self.lbg = ca.repmat(0, self.g.size1())
+        g = ca.veccat(c, d, e)
+        self.lbg = np.full(g.size1(), 0)
         self.ubg = self.lbg
 
         # Objective function
-        self.f = ca.sum1(ca.vec(self.H ** 2))
+        f = ca.sum1(ca.vec(H ** 2))
 
         # Variable bounds
         lbQ = np.full(self.n_level_nodes, -np.inf)
@@ -359,18 +366,18 @@ class ChannelModel:
         ubdelta = ca.repmat(ca.DM(ubdelta), 1, n_control_time_steps)
 
         # Optimization problem
-        assert self.Q.size() == lbQ.size()
-        assert self.Q.size() == ubQ.size()
-        assert self.H.size() == lbH.size()
-        assert self.H.size() == ubH.size()
+        assert Q.size() == lbQ.size()
+        assert Q.size() == ubQ.size()
+        assert H.size() == lbH.size()
+        assert H.size() == ubH.size()
 
-        self.X = ca.veccat(self.Q, self.H, self.delta)
-        self.lbX = ca.veccat(lbQ, lbH, lbdelta)
-        self.ubX = ca.veccat(ubQ, ubH, ubdelta)
+        X = ca.veccat(Q, H, delta)
 
-    def solve(self, lbdelta, ubdelta):
-        nlp = {"f": self.f, "g": self.g, "x": self.X, "p": self.theta}
-        solver = ca.nlpsol(
+        self.lbX = np.array(ca.veccat(lbQ, lbH, lbdelta))
+        self.ubX = np.array(ca.veccat(ubQ, ubH, ubdelta))
+
+        nlp = {"f": f, "g": g, "x": X, "p": theta}
+        self.solver = ca.nlpsol(
             "nlpsol",
             "ipopt",
             nlp,
@@ -386,8 +393,8 @@ class ChannelModel:
                     "fixed_variable_treatment": "make_constraint",
                     "linear_system_scaling": "none",
                     "nlp_scaling_method": "none",
-                    #"linear_solver": "ma57",  # Required for parallel mode, as mumps is not thread-safe
-                    #"ma57_automatic_scaling": "no",
+                    # "linear_solver": "ma57",  # Required for parallel mode, as mumps is not thread-safe
+                    # "ma57_automatic_scaling": "no",
                     # The following two settings are there to limit time spent
                     # on solutions with extensive drying of the canal, which
                     # are expensive to compute.  This is one of the hacks
@@ -399,6 +406,19 @@ class ChannelModel:
             },
         )
 
+        self.X_numel = X.numel()
+
+        self.Q_size1 = Q.size1()
+        self.Q_size2 = Q.size2()
+        self.Q_numel = Q.numel()
+
+        self.H_size1 = H.size1()
+        self.H_size2 = H.size2()
+        self.H_numel = H.numel()
+
+        self.delta_numel = delta.numel()
+
+    def solve(self, lbdelta, ubdelta):
         # Set bounds on integer variables
         w_lbX = np.array(
             self.lbX, copy=True
@@ -407,33 +427,33 @@ class ChannelModel:
             self.ubX, copy=True
         )  # Make a copy to ensure this method remains re-entrant
 
-        offset = self.Q.numel() + self.H.numel()
+        offset = self.Q_numel + self.H_numel
         w_lbX[offset:] = ca.DM(lbdelta)
         w_ubX[offset:] = ca.DM(ubdelta)
 
         # Homotopy loop
         results = {}
-        x0 = ca.repmat(0, self.X.size1())
+        x0 = ca.repmat(0, self.X_numel)
         if self.n_theta_steps > 1:
             theta_values = np.linspace(0.0, 1.0, self.n_theta_steps)
         else:
             theta_values = [1.0]
         for theta_value in theta_values:
-            solution = solver(
+            solution = self.solver(
                 lbx=w_lbX, ubx=w_ubX, lbg=self.lbg, ubg=self.ubg, p=theta_value, x0=x0
             )
-            if solver.stats()["return_status"] != "Solve_Succeeded":
+            if self.solver.stats()["return_status"] != "Solve_Succeeded":
                 raise OptimizationError(
                     "Solve failed with status {}".format(
-                        solver.stats()["return_status"]
+                        self.solver.stats()["return_status"]
                     )
                 )
             x0 = solution["x"]
-            Q_res = ca.reshape(x0[: self.Q.numel()], self.Q.size1(), self.Q.size2())
+            Q_res = ca.reshape(x0[: self.Q_numel], self.Q_size1, self.Q_size2)
             H_res = ca.reshape(
-                x0[self.Q.numel() : self.Q.numel() + self.H.numel()],
-                self.H.size1(),
-                self.H.size2(),
+                x0[self.Q_numel : self.Q_numel + self.H_numel],
+                self.H_size1,
+                self.H_size2,
             )
             d = {}
             d["objective"] = solution["f"]
@@ -445,7 +465,7 @@ class ChannelModel:
                 d[f"H_{i + 1}"] = np.array(
                     ca.horzcat(self.H0[i], H_res[i, :])
                 ).flatten()
-            d["delta"] = x0[self.Q.numel() + self.H.numel() :]
+            d["delta"] = x0[self.Q_numel + self.H_numel :]
             results[theta_value] = d
         return results
 
@@ -459,7 +479,10 @@ class NonLinearPruneCallback(BranchCallback):
             [self.get_upper_bounds(name) for name in master_model.delta_names]
         )
         try:
-            ret = channel_model.solve(lbdelta, ubdelta)
+            res = master_model.pool.apply_async(channel_model_solve, (lbdelta, ubdelta))
+            results = res.get()
+        except KeyboardInterrupt:
+            sys.exit(-1)
         except OptimizationError:
             # The following two settings are there to limit time spent
             # on solutions with extensive drying of the canal, which
@@ -470,11 +493,13 @@ class NonLinearPruneCallback(BranchCallback):
             print(f"pruned branch whose relaxation took too long to solve")
         else:
             if (
-                ret[1.0]["objective"]
+                results[1.0]["objective"]
                 > master_model.nonlinear_incumbent[1.0]["objective"]
             ):
                 self.prune()
-                print(f"pruned branch with relaxation objective value {ret[1.0]['objective']}")
+                print(
+                    f"pruned branch with relaxation objective value {results[1.0]['objective']}"
+                )
 
 
 class NonLinearIncumbentCallback(IncumbentCallback):
@@ -487,13 +512,16 @@ class NonLinearIncumbentCallback(IncumbentCallback):
         ubdelta = np.ones(len(delta_values))
         ubdelta[np.where(delta_values < 0.5)[0]] = 0.0
         try:
-            results = channel_model.solve(lbdelta, ubdelta)
+            res = master_model.pool.apply_async(channel_model_solve, (lbdelta, ubdelta))
+            results = res.get()
+        except KeyboardInterrupt:
+            sys.exit(-1)
         except OptimizationError:
             self.reject()
         else:
             objective = results[1.0]["objective"]
-            #with master_model.nonlinear_incumbent_lock:
-            if True:
+            with master_model.nonlinear_incumbent_lock:
+                # if True:
                 if objective < master_model.nonlinear_incumbent[1.0]["objective"]:
                     master_model.nonlinear_incumbent.update(results)
                     print(f"updated incumbent with objective value {objective}")
@@ -519,19 +547,30 @@ class MasterModel:
         # Disable presolve, as we don't want to get rid of any "unused" (from the CPLEX point of view) boolean variables
         self.c.parameters.preprocessing.presolve.set(0)
         # Parallelization
-        self.c.parameters.threads.set(1) #multiprocessing.cpu_count())
-        self.c.parameters.parallel.set(self.c.parameters.parallel.values.deterministic)
+        self.c.parameters.threads.set(multiprocessing.cpu_count())
+        self.c.parameters.parallel.set(self.c.parameters.parallel.values.opportunistic)
 
         # Nonlinear incumbent
         self.nonlinear_incumbent = {1.0: {"objective": np.inf}}
         self.nonlinear_incumbent_lock = threading.Lock()
+
+        # Process pool
+        def pool_initializer(channel_model_pickle):
+            global channel_model
+            channel_model = pickle.loads(channel_model_pickle)
+
+        self.pool = multiprocessing.Pool(
+            initializer=pool_initializer,
+            initargs=(pickle.dumps(channel_model),),
+            processes=multiprocessing.cpu_count(),
+        )
 
         # Callbacks
         self.c.register_callback(NonLinearPruneCallback)
         self.c.register_callback(NonLinearIncumbentCallback)
 
         # Create integer variables
-        numel = nonlinear_model.delta.numel()
+        numel = nonlinear_model.delta_numel
         self.delta_names = [f"delta[{i}]" for i in range(numel)]
         self.c.variables.add(
             lb=[0] * numel,
@@ -557,6 +596,12 @@ channel_model = ChannelModel(
     control_dt=4 * 60 * 60,
     n_weirs=n_weirs,
 )
+
+
+def channel_model_solve(lbdelta, ubdelta):
+    return channel_model.solve(lbdelta, ubdelta)
+
+
 master_model = MasterModel(channel_model)
 
 results = master_model.solve()
