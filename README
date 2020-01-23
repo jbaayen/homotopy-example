@@ -1,14 +1,18 @@
-This script implements the example case from the paper
+Branch cplex-coupling implements experiments behind:
+
+    Mixed-Integer Path-Stable Optimisation, with Applications in Model-Predictive Control of Water Systems
+
+by Jorn H. Baayen and Jakub Marecek, which is available online at
+
+    https://arxiv.org/abs/2001.08121
+
+which is a follow-up to:
 
     Continuation method for PDE-constrained global optimization: Analysis and application to the shallow water equations
 
 by Jorn H. Baayen, Teresa Piovesan, and Jesse VanderWees, available online at
 
     https://arxiv.org/abs/1801.06507
-
-The approach introduced in the paper and illustrated with this example forms the basis of 
-KISTERS Real Time Optimization (RTO), an enterprise solution for real-time global optimization
-of hydraulic systems.
 
 An earlier version of the continuation method is implemented in the open source software package RTC-Tools.
 
