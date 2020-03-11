@@ -74,7 +74,7 @@ d = (
     / dx
     + g
     * (
-        theta * P_full[:, :-1] * sabs(Q_full[1:-1, :-1]) / A_full[1:-1, :-1] ** 2 # TODO causes instab
+        theta * P_full[:, :-1] * sabs(Q_full[1:-1, :-1]) / A_full[1:-1, :-1] ** 2
         + (1 - theta) * P_nominal * sabs(Q_nominal) / A_nominal ** 2
     )
     * Q_full[1:-1, 1:]
