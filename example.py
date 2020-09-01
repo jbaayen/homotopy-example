@@ -14,8 +14,12 @@ w = 50.0
 C = 40.0
 H_nominal = 0.0
 Q_nominal = 100
+Q_min = 100.0
+Q_max = 200.0
 n_theta_steps = 10
-trace_path = True
+trace_path = False
+multi_start = True
+n_starting_points = 1000
 
 # Generic constants
 g = 9.81
@@ -31,7 +35,7 @@ P_nominal = w + 2 * (H_nominal - np.mean(H_b))
 sabs = lambda x: ca.sqrt(x ** 2 + eps)
 
 # Smoothed Heaviside function
-sH = lambda x : 1 / (1 + ca.exp(-K * x))
+sH = lambda x: 1 / (1 + ca.exp(-K * x))
 
 # Compute steady state initial condition
 Q0 = np.full(n_level_nodes, 100.0)
@@ -61,12 +65,20 @@ P_full = w + (H_full[1:, :] - H_b[1:] + H_full[:-1, :] - H_b[:-1])
 c = w * (H_full[:, 1:] - H_full[:, :-1]) / dt + (Q_full[1:, 1:] - Q_full[:-1, 1:]) / dx
 d = (
     (Q_full[1:-1, 1:] - Q_full[1:-1, :-1]) / dt
-    + theta * (
-        2 * Q_full[1:-1, :-1] / A_full[1:-1, :-1] * (
+    + theta
+    * (
+        2
+        * Q_full[1:-1, :-1]
+        / A_full[1:-1, :-1]
+        * (
             sH(Q_full[1:-1, :-1]) * (Q_full[1:-1, :-1] - Q_full[0:-2, :-1]) / dx
             + (1 - sH(Q_full[1:-1, :-1])) * (Q_full[2:, :-1] - Q_full[1:-1, :-1]) / dx
         )
-        - Q_full[1:-1, :-1]**2 / A_full[1:-1, :-1]**2 * w * (H_full[1:, :-1] - H_full[:-1, :-1]) / dx
+        - Q_full[1:-1, :-1] ** 2
+        / A_full[1:-1, :-1] ** 2
+        * w
+        * (H_full[1:, :-1] - H_full[:-1, :-1])
+        / dx
     )
     + g
     * (theta * A_full[1:-1, :-1] + (1 - theta) * A_nominal)
@@ -86,9 +98,9 @@ f = ca.sum1(ca.vec(H ** 2))
 
 # Variable bounds
 lbQ = np.full(n_level_nodes, -np.inf)
-lbQ[-1] = 100.0
+lbQ[-1] = Q_min
 ubQ = np.full(n_level_nodes, np.inf)
-ubQ[-1] = 200.0
+ubQ[-1] = Q_max
 
 lbQ = ca.repmat(ca.DM(lbQ), 1, T)
 ubQ = ca.repmat(ca.DM(ubQ), 1, T)
@@ -127,13 +139,11 @@ solver = ca.nlpsol(
     },
 )
 
-# Initial guess
-x0 = ca.repmat(0, X.size1())
-
 # Solve
 t0 = time.time()
 
 results = {}
+
 
 def solve(theta_value, x0):
     solution = solver(lbx=lbX, ubx=ubX, lbg=lbg, ubg=ubg, p=theta_value, x0=x0)
@@ -152,10 +162,27 @@ def solve(theta_value, x0):
     results[theta_value] = d
     return x
 
-if trace_path:
-    for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
-        x0 = solve(theta_value, x0)
+
+if multi_start:
+    import pyDOE
+
+    starting_points = pyDOE.lhs(X.size1(), n_starting_points)
+    starting_points[:, : Q.size1() * Q.size2()] *= Q_max - Q_min
+    starting_points[:, : Q.size1() * Q.size2()] += Q_min
 else:
-    solve(1.0, x0)
+    starting_points = ca.repmat(0, X.size1())
+
+solutions = []
+for i, x0 in enumerate(starting_points):
+    print(f"{i}/{len(starting_points)}")
+    if trace_path:
+        for theta_value in np.linspace(0.0, 1.0, n_theta_steps):
+            x0 = solve(theta_value, x0)
+    else:
+        x0 = solve(1.0, x0)
+    solutions.append(x0.toarray().flatten())
 
 print("Time elapsed in solver: {}s".format(time.time() - t0))
+
+solutions = np.array(solutions)
+print(list(np.std(solutions, axis=0)))
