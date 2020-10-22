@@ -1,10 +1,18 @@
 This script implements the example case from the paper
 
     Continuation method for PDE-constrained global optimization: Analysis and application to the shallow water equations
-
+ 
 by Jorn H. Baayen, Teresa Piovesan, and Jesse VanderWees, available online at
 
     https://arxiv.org/abs/1801.06507
+    
+The example also features in
+    
+    Global optimality in model predictive control via hidden invariant convexity
+    
+by Jorn H. Baayen and Krzysztof Postek, available online at
+
+    https://arxiv.org/abs/2007.07062
 
 The approach introduced in the paper and illustrated with this example forms the basis of 
 KISTERS Real Time Optimization (RTO), an enterprise solution for real-time global optimization
